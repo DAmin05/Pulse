@@ -12,13 +12,14 @@ See [docs/PLAN.md](docs/PLAN.md) for the full design and roadmap.
 ```
 crates/
   pulse-core/        shared protobuf types, Kafka configs, topic names, article ids
-  pulse-cli/         `pulse` developer CLI (`pulse doctor`)
-  ingestor/          RSS/API polling → articles.raw                (phase 1)
+  pulse-cli/         `pulse` developer CLI (doctor, fixture record/stats)
+  ingestor/          RSS + GDELT polling → articles.raw
   story-processor/   clustering, checkpoints, replay mode          (phases 3–5, 7)
   story-sink/        stories.events → Postgres                     (phase 6)
   query-api/         Axum REST + SSE                               (phase 6)
 embedder/            Python gRPC embedding service (ONNX)          (phase 2)
 proto/               protobuf schemas (buf-managed)
+config/              sources.toml (feed catalog)
 deploy/              docker-compose stack and its config
 docs/                design and plan
 ```
@@ -41,6 +42,42 @@ make check     # fmt, clippy, tests, buf lint, embedder tests
 ```
 
 `make help` lists all targets. `make nuke` deletes all local data.
+
+## Ingestor
+
+Polls ~130 RSS feeds in 25+ languages (see [config/sources.toml](config/sources.toml))
+and publishes `pulse.v1.Article` messages to `articles.raw`, keyed by article id.
+
+```bash
+make sources-check   # poll every source once, print a health table, publish nothing
+make ingest          # run continuously (metrics on :9101/metrics)
+make fixture-record  # snapshot the last 24h of articles.raw into data/fixtures/
+```
+
+- **Politeness:** conditional GET (ETag / Last-Modified), first polls staggered across
+  the interval, ±10% jitter, at most 2 concurrent requests per host, exponential
+  backoff on errors, `Retry-After` honored.
+- **No duplicate publishing:** URLs are canonicalized before hashing into ids. A seen
+  set skips items already published and is rebuilt from `articles.raw` on startup, so
+  restarts don't republish.
+- **Event time:** the publisher's timestamp. Missing or future timestamps fall back to
+  fetch time and are flagged `event_time_corrected`. Items older than `max_age` (72h)
+  are skipped.
+- **Language:** configured per source, then the feed's declared language, then
+  detection (`detect_lang = true` for mixed-language feeds). Normalized to ISO 639-1.
+- **GDELT:** off by default for live use (high volume, mostly local news, headlines
+  only). Use it for load-test fixtures:
+
+  ```bash
+  cargo run -p ingestor --release -- backfill-gdelt --stream translingual \
+    --from 2026-10-01T00:00:00Z --to 2026-10-01T06:00:00Z --out data/fixtures/gdelt.pulsefx
+  ```
+
+  Fixture output is deterministic for a given range: ordered by `(fetched_at, id)`,
+  with `fetched_at` set to the slot's end time.
+
+Add a feed by appending a `[[source]]` block, then run
+`cargo run -p ingestor -- check --source <id>`.
 
 ## Local services
 

@@ -8,8 +8,31 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+clap.workspace = true
+feed-rs = "3.0.0"
+html-escape = "0.2.15"
+humantime-serde = "1.1.1"
+isolang = "2.4.0"
+metrics = "0.24.6"
+metrics-exporter-prometheus = { version = "0.18.3", default-features = false, features = ["http-listener"] }
+prost.workspace = true
 pulse-core.workspace = true
+rdkafka.workspace = true
+reqwest = { workspace = true, features = ["gzip", "brotli", "deflate"] }
+serde.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util = "0.7.19"
+toml = "1.1.6"
 tracing.workspace = true
+url.workspace = true
+whatlang = "0.18.0"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile = "3.27.0"

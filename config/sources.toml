@@ -1,0 +1,1001 @@
+# Pulse sources. Validate with:  cargo run -p ingestor -- check
+# Every enabled RSS feed below passed `ingestor check` when it was added.
+
+[defaults]
+poll_interval = "3m"
+max_age = "72h"
+timeout = "20s"
+max_concurrent = 16
+max_concurrent_per_host = 2
+max_summary_chars = 600
+user_agent = "PulseNewsBot/0.1 (news aggregation research project)"
+
+
+# --- English: international ---
+
+[[source]]
+id = "bbc-world"
+url = "https://feeds.bbci.co.uk/news/world/rss.xml"
+lang = "en"
+category = "world"
+region = "gb"
+
+[[source]]
+id = "bbc-top"
+url = "https://feeds.bbci.co.uk/news/rss.xml"
+lang = "en"
+category = "general"
+region = "gb"
+
+[[source]]
+id = "bbc-business"
+url = "https://feeds.bbci.co.uk/news/business/rss.xml"
+lang = "en"
+category = "business"
+region = "gb"
+
+[[source]]
+id = "bbc-tech"
+url = "https://feeds.bbci.co.uk/news/technology/rss.xml"
+lang = "en"
+category = "technology"
+region = "gb"
+
+[[source]]
+id = "bbc-science"
+url = "https://feeds.bbci.co.uk/news/science_and_environment/rss.xml"
+lang = "en"
+category = "science"
+region = "gb"
+
+[[source]]
+id = "bbc-health"
+url = "https://feeds.bbci.co.uk/news/health/rss.xml"
+lang = "en"
+category = "health"
+region = "gb"
+
+[[source]]
+id = "guardian-world"
+url = "https://www.theguardian.com/world/rss"
+lang = "en"
+category = "world"
+region = "gb"
+
+[[source]]
+id = "guardian-uk"
+url = "https://www.theguardian.com/uk-news/rss"
+lang = "en"
+category = "general"
+region = "gb"
+
+[[source]]
+id = "guardian-us"
+url = "https://www.theguardian.com/us-news/rss"
+lang = "en"
+category = "general"
+region = "us"
+
+[[source]]
+id = "guardian-business"
+url = "https://www.theguardian.com/business/rss"
+lang = "en"
+category = "business"
+region = "gb"
+
+[[source]]
+id = "guardian-tech"
+url = "https://www.theguardian.com/technology/rss"
+lang = "en"
+category = "technology"
+region = "gb"
+
+[[source]]
+id = "guardian-environment"
+url = "https://www.theguardian.com/environment/rss"
+lang = "en"
+category = "science"
+region = "gb"
+
+[[source]]
+id = "guardian-science"
+url = "https://www.theguardian.com/science/rss"
+lang = "en"
+category = "science"
+region = "gb"
+
+[[source]]
+id = "nyt-home"
+url = "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml"
+lang = "en"
+category = "general"
+region = "us"
+
+[[source]]
+id = "nyt-world"
+url = "https://rss.nytimes.com/services/xml/rss/nyt/World.xml"
+lang = "en"
+category = "world"
+region = "us"
+
+[[source]]
+id = "nyt-us"
+url = "https://rss.nytimes.com/services/xml/rss/nyt/US.xml"
+lang = "en"
+category = "general"
+region = "us"
+
+[[source]]
+id = "nyt-politics"
+url = "https://rss.nytimes.com/services/xml/rss/nyt/Politics.xml"
+lang = "en"
+category = "politics"
+region = "us"
+
+[[source]]
+id = "nyt-business"
+url = "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml"
+lang = "en"
+category = "business"
+region = "us"
+
+[[source]]
+id = "nyt-tech"
+url = "https://rss.nytimes.com/services/xml/rss/nyt/Technology.xml"
+lang = "en"
+category = "technology"
+region = "us"
+
+[[source]]
+id = "nyt-science"
+url = "https://rss.nytimes.com/services/xml/rss/nyt/Science.xml"
+lang = "en"
+category = "science"
+region = "us"
+
+[[source]]
+id = "nyt-health"
+url = "https://rss.nytimes.com/services/xml/rss/nyt/Health.xml"
+lang = "en"
+category = "health"
+region = "us"
+
+[[source]]
+id = "npr-news"
+url = "https://feeds.npr.org/1001/rss.xml"
+lang = "en"
+category = "general"
+region = "us"
+
+[[source]]
+id = "npr-world"
+url = "https://feeds.npr.org/1004/rss.xml"
+lang = "en"
+category = "world"
+region = "us"
+
+[[source]]
+id = "npr-business"
+url = "https://feeds.npr.org/1006/rss.xml"
+lang = "en"
+category = "business"
+region = "us"
+
+[[source]]
+id = "npr-tech"
+url = "https://feeds.npr.org/1019/rss.xml"
+lang = "en"
+category = "technology"
+region = "us"
+
+[[source]]
+id = "aljazeera-en"
+url = "https://www.aljazeera.com/xml/rss/all.xml"
+lang = "en"
+category = "world"
+region = "qa"
+
+[[source]]
+id = "dw-en"
+url = "https://rss.dw.com/xml/rss-en-all"
+lang = "en"
+category = "world"
+region = "de"
+
+[[source]]
+id = "dw-en-world"
+url = "https://rss.dw.com/xml/rss-en-world"
+lang = "en"
+category = "world"
+region = "de"
+
+[[source]]
+id = "dw-en-business"
+url = "https://rss.dw.com/xml/rss-en-bus"
+lang = "en"
+category = "business"
+region = "de"
+
+[[source]]
+id = "france24-en"
+url = "https://www.france24.com/en/rss"
+lang = "en"
+category = "world"
+region = "fr"
+
+[[source]]
+id = "euronews-en"
+url = "https://www.euronews.com/rss"
+lang = "en"
+category = "world"
+region = "eu"
+
+[[source]]
+id = "cnbc-top"
+url = "https://www.cnbc.com/id/100003114/device/rss/rss.html"
+lang = "en"
+category = "business"
+region = "us"
+
+[[source]]
+id = "cnbc-world"
+url = "https://www.cnbc.com/id/100727362/device/rss/rss.html"
+lang = "en"
+category = "world"
+region = "us"
+
+[[source]]
+id = "abc-au"
+url = "https://www.abc.net.au/news/feed/51120/rss.xml"
+lang = "en"
+category = "general"
+region = "au"
+
+[[source]]
+id = "sky-world"
+url = "https://feeds.skynews.com/feeds/rss/world.xml"
+lang = "en"
+category = "world"
+region = "gb"
+
+[[source]]
+id = "sky-home"
+url = "https://feeds.skynews.com/feeds/rss/home.xml"
+lang = "en"
+category = "general"
+region = "gb"
+
+[[source]]
+id = "independent-world"
+url = "https://www.independent.co.uk/news/world/rss"
+lang = "en"
+category = "world"
+region = "gb"
+
+[[source]]
+id = "wapo-world"
+url = "https://feeds.washingtonpost.com/rss/world"
+lang = "en"
+category = "world"
+region = "us"
+
+[[source]]
+id = "latimes-world"
+url = "https://www.latimes.com/world-nation/rss2.0.xml"
+lang = "en"
+category = "world"
+region = "us"
+
+[[source]]
+id = "politico"
+url = "https://rss.politico.com/politics-news.xml"
+lang = "en"
+category = "politics"
+region = "us"
+
+[[source]]
+id = "thehill"
+url = "https://thehill.com/news/feed/"
+lang = "en"
+category = "politics"
+region = "us"
+
+[[source]]
+id = "fox-world"
+url = "https://moxie.foxnews.com/google-publisher/world.xml"
+lang = "en"
+category = "world"
+region = "us"
+
+[[source]]
+id = "cbs-world"
+url = "https://www.cbsnews.com/latest/rss/world"
+lang = "en"
+category = "world"
+region = "us"
+
+[[source]]
+id = "abc-us-intl"
+url = "https://abcnews.go.com/abcnews/internationalheadlines"
+lang = "en"
+category = "world"
+region = "us"
+
+[[source]]
+id = "marketwatch"
+url = "https://feeds.content.dowjones.io/public/rss/mw_topstories"
+lang = "en"
+category = "business"
+region = "us"
+
+[[source]]
+id = "toi-top"
+url = "https://timesofindia.indiatimes.com/rssfeedstopstories.cms"
+lang = "en"
+category = "general"
+region = "in"
+
+[[source]]
+id = "thehindu-intl"
+url = "https://www.thehindu.com/news/international/feeder/default.rss"
+lang = "en"
+category = "world"
+region = "in"
+
+[[source]]
+id = "ndtv-world"
+url = "https://feeds.feedburner.com/ndtvnews-world-news"
+lang = "en"
+category = "world"
+region = "in"
+
+[[source]]
+id = "scmp-world"
+url = "https://www.scmp.com/rss/91/feed"
+lang = "en"
+category = "world"
+region = "hk"
+
+[[source]]
+id = "japantimes"
+url = "https://www.japantimes.co.jp/feed/"
+lang = "en"
+category = "general"
+region = "jp"
+
+[[source]]
+id = "yonhap-en"
+url = "https://en.yna.co.kr/RSS/news.xml"
+lang = "en"
+category = "general"
+region = "kr"
+
+[[source]]
+id = "straitstimes-world"
+url = "https://www.straitstimes.com/news/world/rss.xml"
+lang = "en"
+category = "world"
+region = "sg"
+
+[[source]]
+id = "timesofisrael"
+url = "https://www.timesofisrael.com/feed/"
+lang = "en"
+category = "world"
+region = "il"
+
+[[source]]
+id = "kyivindependent"
+url = "https://kyivindependent.com/news-archive/rss/"
+lang = "en"
+category = "world"
+region = "ua"
+
+[[source]]
+id = "moscowtimes"
+url = "https://www.themoscowtimes.com/rss/news"
+lang = "en"
+category = "world"
+region = "ru"
+
+[[source]]
+id = "africanews-en"
+url = "https://www.africanews.com/feed/rss"
+lang = "en"
+category = "world"
+region = "africa"
+
+[[source]]
+id = "allafrica"
+url = "https://allafrica.com/tools/headlines/rdf/latest/headlines.rdf"
+lang = "en"
+category = "world"
+region = "africa"
+
+[[source]]
+id = "un-news"
+url = "https://news.un.org/feed/subscribe/en/news/all/rss.xml"
+lang = "en"
+category = "world"
+region = "intl"
+
+
+# --- English: technology & science ---
+
+[[source]]
+id = "arstechnica"
+url = "https://feeds.arstechnica.com/arstechnica/index"
+lang = "en"
+category = "technology"
+region = "us"
+
+[[source]]
+id = "theverge"
+url = "https://www.theverge.com/rss/index.xml"
+lang = "en"
+category = "technology"
+region = "us"
+
+[[source]]
+id = "techcrunch"
+url = "https://techcrunch.com/feed/"
+lang = "en"
+category = "technology"
+region = "us"
+
+[[source]]
+id = "wired"
+url = "https://www.wired.com/feed/rss"
+lang = "en"
+category = "technology"
+region = "us"
+
+[[source]]
+id = "engadget"
+url = "https://www.engadget.com/rss.xml"
+lang = "en"
+category = "technology"
+region = "us"
+
+[[source]]
+id = "hn-frontpage"
+url = "https://hnrss.org/frontpage"
+lang = "en"
+category = "technology"
+region = "intl"
+
+[[source]]
+id = "nature-news"
+url = "https://www.nature.com/nature.rss"
+lang = "en"
+category = "science"
+region = "intl"
+
+[[source]]
+id = "sciencedaily"
+url = "https://www.sciencedaily.com/rss/all.xml"
+lang = "en"
+category = "science"
+region = "intl"
+
+[[source]]
+id = "nasa-news"
+url = "https://www.nasa.gov/news-release/feed/"
+lang = "en"
+category = "science"
+region = "us"
+
+
+# --- Spanish ---
+
+[[source]]
+id = "bbc-mundo"
+url = "https://feeds.bbci.co.uk/mundo/rss.xml"
+lang = "es"
+category = "world"
+region = "intl"
+
+[[source]]
+id = "elpais"
+url = "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada"
+lang = "es"
+category = "general"
+region = "es"
+
+[[source]]
+id = "elmundo"
+url = "https://e00-elmundo.uecdn.es/elmundo/rss/portada.xml"
+lang = "es"
+category = "general"
+region = "es"
+
+[[source]]
+id = "dw-es"
+url = "https://rss.dw.com/xml/rss-sp-all"
+lang = "es"
+category = "world"
+region = "de"
+
+[[source]]
+id = "france24-es"
+url = "https://www.france24.com/es/rss"
+lang = "es"
+category = "world"
+region = "fr"
+
+[[source]]
+id = "infobae"
+url = "https://www.infobae.com/arc/outboundfeeds/rss/"
+lang = "es"
+category = "general"
+region = "ar"
+
+[[source]]
+id = "clarin"
+url = "https://www.clarin.com/rss/lo-ultimo/"
+lang = "es"
+category = "general"
+region = "ar"
+
+[[source]]
+id = "lanacion-ar"
+url = "https://www.lanacion.com.ar/arc/outboundfeeds/rss/"
+lang = "es"
+category = "general"
+region = "ar"
+
+[[source]]
+id = "eluniversal-mx"
+url = "https://www.eluniversal.com.mx/arc/outboundfeeds/rss/?outputType=xml"
+lang = "es"
+category = "general"
+region = "mx"
+
+[[source]]
+id = "europapress"
+url = "https://www.europapress.es/rss/rss.aspx"
+lang = "es"
+category = "general"
+region = "es"
+
+[[source]]
+id = "20minutos"
+url = "https://www.20minutos.es/rss/"
+lang = "es"
+category = "general"
+region = "es"
+
+
+# --- French ---
+
+[[source]]
+id = "lemonde-une"
+url = "https://www.lemonde.fr/rss/une.xml"
+lang = "fr"
+category = "general"
+region = "fr"
+
+[[source]]
+id = "lemonde-intl"
+url = "https://www.lemonde.fr/international/rss_full.xml"
+lang = "fr"
+category = "world"
+region = "fr"
+
+[[source]]
+id = "france24-fr"
+url = "https://www.france24.com/fr/rss"
+lang = "fr"
+category = "world"
+region = "fr"
+
+[[source]]
+id = "rfi-fr"
+url = "https://www.rfi.fr/fr/rss"
+lang = "fr"
+category = "world"
+region = "fr"
+
+[[source]]
+id = "lefigaro"
+url = "https://www.lefigaro.fr/rss/figaro_actualites.xml"
+lang = "fr"
+category = "general"
+region = "fr"
+
+[[source]]
+id = "liberation"
+url = "https://www.liberation.fr/arc/outboundfeeds/rss-all/?outputType=xml"
+lang = "fr"
+category = "general"
+region = "fr"
+
+[[source]]
+id = "franceinfo"
+url = "https://www.francetvinfo.fr/titres.rss"
+lang = "fr"
+category = "general"
+region = "fr"
+
+[[source]]
+id = "bbc-afrique"
+url = "https://feeds.bbci.co.uk/afrique/rss.xml"
+lang = "fr"
+category = "world"
+region = "africa"
+
+[[source]]
+id = "radio-canada"
+url = "https://ici.radio-canada.ca/rss/4159"
+lang = "fr"
+category = "general"
+region = "ca"
+
+
+# --- German ---
+
+[[source]]
+id = "spiegel"
+url = "https://www.spiegel.de/schlagzeilen/index.rss"
+lang = "de"
+category = "general"
+region = "de"
+
+[[source]]
+id = "tagesschau"
+url = "https://www.tagesschau.de/index~rss2.xml"
+lang = "de"
+category = "general"
+region = "de"
+
+[[source]]
+id = "zeit"
+url = "https://newsfeed.zeit.de/index"
+lang = "de"
+category = "general"
+region = "de"
+
+[[source]]
+id = "faz"
+url = "https://www.faz.net/rss/aktuell/"
+lang = "de"
+category = "general"
+region = "de"
+
+[[source]]
+id = "sueddeutsche"
+url = "https://rss.sueddeutsche.de/rss/Topthemen"
+lang = "de"
+category = "general"
+region = "de"
+
+[[source]]
+id = "dw-de"
+url = "https://rss.dw.com/xml/rss-de-all"
+lang = "de"
+category = "world"
+region = "de"
+
+[[source]]
+id = "nzz"
+url = "https://www.nzz.ch/recent.rss"
+lang = "de"
+category = "general"
+region = "ch"
+
+[[source]]
+id = "orf"
+url = "https://rss.orf.at/news.xml"
+lang = "de"
+category = "general"
+region = "at"
+
+
+# --- Italian ---
+
+[[source]]
+id = "ansa"
+url = "https://www.ansa.it/sito/ansait_rss.xml"
+lang = "it"
+category = "general"
+region = "it"
+
+[[source]]
+id = "repubblica"
+url = "https://www.repubblica.it/rss/homepage/rss2.0.xml"
+lang = "it"
+category = "general"
+region = "it"
+
+
+# --- Portuguese ---
+
+[[source]]
+id = "bbc-brasil"
+url = "https://feeds.bbci.co.uk/portuguese/rss.xml"
+lang = "pt"
+category = "world"
+region = "br"
+
+[[source]]
+id = "g1"
+url = "https://g1.globo.com/rss/g1/"
+lang = "pt"
+category = "general"
+region = "br"
+
+[[source]]
+id = "folha"
+url = "https://feeds.folha.uol.com.br/emcimadahora/rss091.xml"
+lang = "pt"
+category = "general"
+region = "br"
+
+[[source]]
+id = "publico-pt"
+url = "https://feeds.feedburner.com/PublicoRSS"
+lang = "pt"
+category = "general"
+region = "pt"
+
+[[source]]
+id = "agencia-brasil"
+url = "https://agenciabrasil.ebc.com.br/rss/ultimasnoticias/feed.xml"
+lang = "pt"
+category = "general"
+region = "br"
+
+
+# --- Arabic ---
+
+[[source]]
+id = "bbc-arabic"
+url = "https://feeds.bbci.co.uk/arabic/rss.xml"
+lang = "ar"
+category = "world"
+region = "intl"
+
+[[source]]
+id = "aljazeera-ar"
+url = "https://www.aljazeera.net/aljazeerarss/a7c186be-1baa-4bd4-9d80-a84db769f779/73d0e1b4-532f-45ef-b135-bfdff8b8cab9"
+lang = "ar"
+category = "world"
+region = "qa"
+
+[[source]]
+id = "france24-ar"
+url = "https://www.france24.com/ar/rss"
+lang = "ar"
+category = "world"
+region = "fr"
+
+[[source]]
+id = "dw-ar"
+url = "https://rss.dw.com/xml/rss-ar-all"
+lang = "ar"
+category = "world"
+region = "de"
+
+
+# --- Russian / Ukrainian ---
+
+[[source]]
+id = "bbc-russian"
+url = "https://feeds.bbci.co.uk/russian/rss.xml"
+lang = "ru"
+category = "world"
+region = "intl"
+
+[[source]]
+id = "meduza"
+url = "https://meduza.io/rss/all"
+lang = "ru"
+category = "general"
+region = "lv"
+
+[[source]]
+id = "dw-ru"
+url = "https://rss.dw.com/xml/rss-ru-all"
+lang = "ru"
+category = "world"
+region = "de"
+
+[[source]]
+id = "bbc-ukrainian"
+url = "https://feeds.bbci.co.uk/ukrainian/rss.xml"
+lang = "uk"
+category = "world"
+region = "intl"
+
+[[source]]
+id = "pravda-ua"
+url = "https://www.pravda.com.ua/rss/"
+lang = "uk"
+category = "general"
+region = "ua"
+
+
+# --- Turkish / Persian ---
+
+[[source]]
+id = "bbc-turkce"
+url = "https://feeds.bbci.co.uk/turkce/rss.xml"
+lang = "tr"
+category = "world"
+region = "intl"
+
+[[source]]
+id = "dw-tr"
+url = "https://rss.dw.com/xml/rss-tur-all"
+lang = "tr"
+category = "world"
+region = "de"
+
+[[source]]
+id = "hurriyet"
+url = "https://www.hurriyet.com.tr/rss/anasayfa"
+lang = "tr"
+category = "general"
+region = "tr"
+
+[[source]]
+id = "bbc-persian"
+url = "https://feeds.bbci.co.uk/persian/rss.xml"
+lang = "fa"
+category = "world"
+region = "intl"
+
+[[source]]
+id = "dw-fa"
+url = "https://rss.dw.com/xml/rss-per-all"
+lang = "fa"
+category = "world"
+region = "de"
+
+
+# --- South Asia ---
+
+[[source]]
+id = "bbc-hindi"
+url = "https://feeds.bbci.co.uk/hindi/rss.xml"
+lang = "hi"
+category = "world"
+region = "in"
+
+[[source]]
+id = "bbc-urdu"
+url = "https://feeds.bbci.co.uk/urdu/rss.xml"
+lang = "ur"
+category = "world"
+region = "pk"
+
+[[source]]
+id = "bbc-bangla"
+url = "https://feeds.bbci.co.uk/bengali/rss.xml"
+lang = "bn"
+category = "world"
+region = "bd"
+
+
+# --- East / Southeast Asia ---
+
+[[source]]
+id = "bbc-chinese"
+url = "https://feeds.bbci.co.uk/zhongwen/simp/rss.xml"
+lang = "zh"
+category = "world"
+region = "intl"
+
+[[source]]
+id = "dw-zh"
+url = "https://rss.dw.com/xml/rss-chi-all"
+lang = "zh"
+category = "world"
+region = "de"
+
+[[source]]
+id = "bbc-japanese"
+url = "https://feeds.bbci.co.uk/japanese/rss.xml"
+lang = "ja"
+category = "world"
+region = "jp"
+
+[[source]]
+id = "bbc-korean"
+url = "https://feeds.bbci.co.uk/korean/rss.xml"
+lang = "ko"
+category = "world"
+region = "kr"
+
+[[source]]
+id = "yonhap-ko"
+url = "https://www.yna.co.kr/rss/news.xml"
+lang = "ko"
+category = "general"
+region = "kr"
+
+[[source]]
+id = "bbc-indonesia"
+url = "https://feeds.bbci.co.uk/indonesia/rss.xml"
+lang = "id"
+category = "world"
+region = "id"
+
+[[source]]
+id = "antara"
+url = "https://www.antaranews.com/rss/terkini.xml"
+lang = "id"
+category = "general"
+region = "id"
+
+[[source]]
+id = "bbc-vietnamese"
+url = "https://feeds.bbci.co.uk/vietnamese/rss.xml"
+lang = "vi"
+category = "world"
+region = "vn"
+
+[[source]]
+id = "bbc-thai"
+url = "https://feeds.bbci.co.uk/thai/rss.xml"
+lang = "th"
+category = "world"
+region = "th"
+
+
+# --- Africa / Europe other ---
+
+[[source]]
+id = "bbc-swahili"
+url = "https://feeds.bbci.co.uk/swahili/rss.xml"
+lang = "sw"
+category = "world"
+region = "africa"
+
+[[source]]
+id = "tvn24"
+url = "https://tvn24.pl/najnowsze.xml"
+lang = "pl"
+category = "general"
+region = "pl"
+
+[[source]]
+id = "dw-pl"
+url = "https://rss.dw.com/xml/rss-pol-all"
+lang = "pl"
+category = "world"
+region = "de"
+
+[[source]]
+id = "nos"
+url = "https://feeds.nos.nl/nosnieuwsalgemeen"
+lang = "nl"
+category = "general"
+region = "nl"
+
+[[source]]
+id = "dw-el"
+url = "https://rss.dw.com/xml/rss-gre-all"
+lang = "el"
+category = "world"
+region = "de"
+
+
+# --- GDELT (opt-in: high volume, mostly local news, headline-only) ---
+# For load tests, prefer `ingestor backfill-gdelt` into a fixture file.
+
+[[source]]
+id = "gdelt-english"
+kind = "gdelt"
+stream = "english"
+enabled = false
+poll_interval = "5m"
+sample = 0.05
+
+[[source]]
+id = "gdelt-translingual"
+kind = "gdelt"
+stream = "translingual"
+enabled = false
+poll_interval = "5m"
+sample = 0.05

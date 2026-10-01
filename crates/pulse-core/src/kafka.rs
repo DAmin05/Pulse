@@ -2,7 +2,84 @@
 //!
 //! Services build their clients from these so the guarantees are set in one place.
 
-use rdkafka::ClientConfig;
+use std::collections::HashMap;
+use std::time::Duration;
+
+use rdkafka::consumer::{BaseConsumer, Consumer};
+use rdkafka::error::KafkaError;
+use rdkafka::message::BorrowedMessage;
+use rdkafka::{ClientConfig, Offset, TopicPartitionList};
+
+#[derive(Debug, thiserror::Error)]
+pub enum ScanError {
+    #[error(transparent)]
+    Kafka(#[from] KafkaError),
+    #[error("timed out reading {0}")]
+    Timeout(String),
+}
+
+/// Calls `f` for every message in `topic` with a timestamp at or after
+/// `since_ms`, up to the end of each partition as of the call. Partitions are
+/// read concurrently, so order is only guaranteed within a partition.
+///
+/// Blocking: call from `spawn_blocking` in async code.
+pub fn scan_since(
+    brokers: &str,
+    topic: &str,
+    since_ms: i64,
+    mut f: impl FnMut(&BorrowedMessage<'_>),
+) -> Result<usize, ScanError> {
+    const TIMEOUT: Duration = Duration::from_secs(10);
+    let consumer: BaseConsumer = base(brokers, "pulse-scan")
+        .set("group.id", "pulse-scan")
+        .set("enable.auto.commit", "false")
+        .set("isolation.level", "read_committed")
+        .create()?;
+
+    let metadata = consumer.fetch_metadata(Some(topic), TIMEOUT)?;
+    let mut by_time = TopicPartitionList::new();
+    for p in metadata.topics().iter().flat_map(|t| t.partitions()) {
+        by_time.add_partition_offset(topic, p.id(), Offset::Offset(since_ms))?;
+    }
+    let starts = consumer.offsets_for_times(by_time, TIMEOUT)?;
+
+    // Assign only partitions with data in range; remember where each ends now.
+    let mut assignment = TopicPartitionList::new();
+    let mut ends: HashMap<i32, i64> = HashMap::new();
+    for elem in starts.elements() {
+        let Offset::Offset(start) = elem.offset() else {
+            continue; // nothing at or after since_ms
+        };
+        let (_, high) = consumer.fetch_watermarks(topic, elem.partition(), TIMEOUT)?;
+        if start < high {
+            assignment.add_partition_offset(topic, elem.partition(), Offset::Offset(start))?;
+            ends.insert(elem.partition(), high);
+        }
+    }
+    if ends.is_empty() {
+        return Ok(0);
+    }
+    consumer.assign(&assignment)?;
+
+    let mut count = 0;
+    while !ends.is_empty() {
+        let msg = consumer
+            .poll(TIMEOUT)
+            .ok_or_else(|| ScanError::Timeout(topic.to_owned()))??;
+        use rdkafka::Message as _;
+        let Some(&end) = ends.get(&msg.partition()) else {
+            continue;
+        };
+        if msg.offset() < end {
+            f(&msg);
+            count += 1;
+        }
+        if msg.offset() + 1 >= end {
+            ends.remove(&msg.partition());
+        }
+    }
+    Ok(count)
+}
 
 fn base(brokers: &str, client_id: &str) -> ClientConfig {
     let mut cfg = ClientConfig::new();

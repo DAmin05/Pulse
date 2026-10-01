@@ -38,6 +38,19 @@ topics: ## List Kafka topics
 doctor: ## Verify the stack from the host
 	cargo run -q -p pulse-cli -- doctor
 
+# --- Ingestor ---------------------------------------------------------------
+
+ingest: ## Run the ingestor (polls config/sources.toml → articles.raw)
+	cargo run -p ingestor --release -- run
+
+sources-check: ## Poll every source once and report health (publishes nothing)
+	cargo run -q -p ingestor --release -- check
+
+FIXTURE ?= data/fixtures/raw-$(shell date -u +%Y%m%d).pulsefx
+fixture-record: ## Record the last 24h of articles.raw into $(FIXTURE)
+	cargo run -q -p pulse-cli --release -- fixture record --since 24h --out $(FIXTURE)
+	cargo run -q -p pulse-cli --release -- fixture stats $(FIXTURE)
+
 # --- Rust --------------------------------------------------------------------
 
 build: ## Build all Rust crates
@@ -77,4 +90,5 @@ py-test: py-proto ## Lint and test the embedder
 
 check: lint test proto-lint py-test ## Run every check CI runs
 
-.PHONY: help env up down nuke ps logs topics doctor build test fmt lint proto-lint py-setup py-proto py-test check
+
+.PHONY: help env up down nuke ps logs topics doctor ingest sources-check fixture-record build test fmt lint proto-lint py-setup py-proto py-test check

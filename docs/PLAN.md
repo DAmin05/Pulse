@@ -47,7 +47,7 @@ Plus one user-facing feature:
 | Source | Use | Limits |
 |---|---|---|
 | RSS feeds | Primary source | None (poll politely) |
-| GDELT DOC 2.0 + 15-min files | Volume, historical backfill, load tests | Free, no key |
+| GDELT GKG 15-min files (English + translingual) | Historical backfill into fixtures, load tests; opt-in sampled live stream | Free, no key. The DOC 2.0 API rate-limits too aggressively to rely on. Translingual files lag about 1h. Headlines only |
 | Guardian Open Platform | Rich metadata | Free dev key, non-commercial |
 | NYT Times Wire / Top Stories | Structured real-time listing | ~500 req/day |
 | Hacker News API | Tech stream | Free, no key |

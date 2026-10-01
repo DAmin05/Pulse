@@ -1,6 +1,7 @@
 //! Shared building blocks for every Pulse service.
 
 pub mod config;
+pub mod fixture;
 pub mod ids;
 pub mod kafka;
 pub mod telemetry;
