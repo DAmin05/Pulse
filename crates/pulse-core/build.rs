@@ -7,8 +7,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("cargo:rerun-if-changed={}", proto_root.display());
 
-    prost_build::Config::new()
-        .protoc_executable(protoc_bin_vendored::protoc_bin_path()?)
-        .compile_protos(&files, &[&proto_root])?;
+    let mut config = prost_build::Config::new();
+    config.protoc_executable(protoc_bin_vendored::protoc_bin_path()?);
+    // Messages plus gRPC clients; servers live in other languages (the Embedder is Python).
+    tonic_build::configure()
+        .build_server(false)
+        .compile_protos_with_config(config, &files, &[&proto_root])?;
     Ok(())
 }

@@ -22,3 +22,5 @@ scrape_configs:
         labels: { service: story-sink }
       - targets: ["host.docker.internal:9105"]
         labels: { service: query-api }
+      - targets: ["host.docker.internal:9106"]
+        labels: { service: embed-relay }

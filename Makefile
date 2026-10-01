@@ -51,6 +51,24 @@ fixture-record: ## Record the last 24h of articles.raw into $(FIXTURE)
 	cargo run -q -p pulse-cli --release -- fixture record --since 24h --out $(FIXTURE)
 	cargo run -q -p pulse-cli --release -- fixture stats $(FIXTURE)
 
+# --- Embedding ---------------------------------------------------------------
+
+model: py-setup ## Download multilingual-e5-small (pinned, checksummed) and build int8
+	$(PY) -m pip install -q -e 'embedder[tools]'
+	$(PY) embedder/scripts/fetch_model.py
+
+embedder: py-proto ## Run the Embedder gRPC service (:50061, metrics :9102)
+	cd embedder && set -a && [ -f ../.env ] && . ../.env; set +a; PYTHONPATH=src .venv/bin/python -m pulse_embedder
+
+relay: ## Run the embed relay (articles.raw → articles.embedded)
+	cargo run -p embed-relay --release
+
+bench: py-proto ## Benchmark dynamic batching (needs a fixture; FIXTURE=...)
+	cd embedder && PYTHONPATH=src .venv/bin/python bench/bench.py --fixture $(abspath $(FIXTURE))
+
+chaos-relay: ## kill -9 the relay repeatedly; verify exactly-once output
+	scripts/chaos/relay.sh 5
+
 # --- Rust --------------------------------------------------------------------
 
 build: ## Build all Rust crates
@@ -91,4 +109,4 @@ py-test: py-proto ## Lint and test the embedder
 check: lint test proto-lint py-test ## Run every check CI runs
 
 
-.PHONY: help env up down nuke ps logs topics doctor ingest sources-check fixture-record build test fmt lint proto-lint py-setup py-proto py-test check
+.PHONY: help env up down nuke ps logs topics doctor ingest sources-check fixture-record build test fmt lint proto-lint py-setup py-proto py-test check model embedder relay bench chaos-relay

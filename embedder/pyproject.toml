@@ -6,6 +6,10 @@ requires-python = ">=3.12"
 dependencies = [
   "grpcio>=1.66",
   "protobuf>=5.28",
+  "numpy>=1.26",
+  "onnxruntime>=1.19",
+  "tokenizers>=0.20",
+  "prometheus-client>=0.20",
 ]
 
 [project.optional-dependencies]
@@ -13,6 +17,11 @@ dev = [
   "grpcio-tools>=1.66",
   "pytest>=8",
   "ruff>=0.6",
+]
+# Model preparation (int8 quantization) and benchmark charts.
+tools = [
+  "onnx>=1.16",
+  "matplotlib>=3.8",
 ]
 
 [build-system]
@@ -23,7 +32,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 testpaths = ["tests"]
 
 [tool.ruff]

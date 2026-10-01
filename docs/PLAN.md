@@ -186,7 +186,9 @@ Serialized with `bincode` or `rkyv`. Checkpoints indexed by offset and watermark
 ### 5.7 Embedder
 - `multilingual-e5-small` ONNX on CPU; inputs prefixed `passage: ` (articles) / `query: ` (search).
 - Dynamic batching: asyncio queue, flush on `max_batch` or `max_wait_ms`.
-- Benchmark grid: `max_batch ∈ {1,4,8,16,32,64}` × `max_wait_ms ∈ {0,2,5,10,20}` × fp32/int8 → p50/p99 latency vs. throughput chart.
+- Benchmark grid: `max_batch ∈ {1,4,8,16,32,64}` × `max_wait_ms ∈ {0,5,20}` × fp32/int8 × token budget → p50/p99 latency vs. throughput chart.
+- Finding: on CPU, naive batching *lowers* throughput (each batch is padded to its longest text). Length-bucketed sub-batches with a token budget fix it. Results in `docs/bench/embedder.md`.
+- Port 50061 (50051 is often taken by other local gRPC services).
 - Prometheus metrics: queue depth, batch size histogram, latency, throughput.
 
 ### 5.8 Query API (Axum, REST + SSE)
@@ -228,7 +230,7 @@ Time travel:
 |---|---|---|---|
 | 0 | Foundations | Cargo workspace, `pulse-core`, `buf` + protos, docker-compose (Redpanda, Postgres+pgvector, SeaweedFS, Prometheus, Grafana), CI | `make up` works, CI green |
 | 1 | Ingestor | Source trait, RSS adapter, `sources.toml` (~100+ multilingual feeds), language detection, GDELT adapter, metrics | 24h unattended run; **record 24h of `articles.raw` as the golden fixture** |
-| 2 | Embedder | gRPC service, dynamic batching, ONNX model, embed loop, benchmark | Benchmark chart; fixture embedded |
+| 2 | Embedder | gRPC service, dynamic batching + length bucketing, ONNX model (fp32/int8), Rust embed relay with Kafka transactions, relay chaos test, benchmark | Benchmark chart; fixture embedded; relay passes kill -9 test |
 | 3 | Processor v1 | Dedup + clustering + story events (no fault tolerance yet) | Sensible stories on fixture (incl. cross-lingual); HNSW recall ≥ 0.95 vs. oracle |
 | 4 | Correctness | Watermarks, late handling, epoch transactions, checkpoints, recovery | Determinism test + 50-kill chaos test pass in CI |
 | 5 | Split / merge | Ticks, split/merge with hysteresis, lineage | Hand-verified events on fixture; thresholds tuned |

@@ -14,10 +14,11 @@ crates/
   pulse-core/        shared protobuf types, Kafka configs, topic names, article ids
   pulse-cli/         `pulse` developer CLI (doctor, fixture record/stats)
   ingestor/          RSS + GDELT polling → articles.raw
+  embed-relay/       articles.raw → Embedder → articles.embedded (Kafka transactions)
   story-processor/   clustering, checkpoints, replay mode          (phases 3–5, 7)
   story-sink/        stories.events → Postgres                     (phase 6)
   query-api/         Axum REST + SSE                               (phase 6)
-embedder/            Python gRPC embedding service (ONNX)          (phase 2)
+embedder/            Python gRPC embedding service (ONNX, dynamic batching)
 proto/               protobuf schemas (buf-managed)
 config/              sources.toml (feed catalog)
 deploy/              docker-compose stack and its config
@@ -78,6 +79,49 @@ make fixture-record  # snapshot the last 24h of articles.raw into data/fixtures/
 
 Add a feed by appending a `[[source]]` block, then run
 `cargo run -p ingestor -- check --source <id>`.
+
+## Embedding
+
+```bash
+make model        # download multilingual-e5-small (pinned revision, sha256-checked) + build int8
+make embedder     # gRPC on :50061, metrics on :9102
+make relay        # articles.raw → articles.embedded, exactly once
+make chaos-relay  # kill -9 the relay 5 times mid-run; verify 1 output per input
+make bench FIXTURE=data/fixtures/<file>.pulsefx
+```
+
+- **Model:** `multilingual-e5-small` (384 dimensions, ~100 languages, shared vector space
+  across languages). Inputs get the `passage: ` / `query: ` prefixes e5 was trained
+  with. Mean pooling, then L2 normalization. `model_version` records the revision,
+  precision and token limit, since all three change the vectors.
+- **Dynamic batching:** a batch closes at `max_batch` texts or `max_wait_ms` after its
+  first request, whichever comes first. Inference runs on one worker thread, so the
+  next batch fills while the current one runs.
+- **Length bucketing:** each batch is sorted by token length and split into
+  sub-batches of at most `PULSE_EMBEDDER_TOKEN_BUDGET` padded tokens (default 1024).
+
+### Benchmark: batch size vs latency (Apple M3 Pro, CPU)
+
+![Embedder batching benchmark](docs/bench/embedder.png)
+
+Under load (64 clients sending one article each), **naive dynamic batching makes CPU
+throughput worse**: every batch is padded to its longest text, and article lengths vary
+a lot. With fp32, going from batch 1 to batch 64 drops throughput from 99 to 64 texts/s.
+Length bucketing reverses that: batch 64 reaches **107 texts/s (fp32, +67%)** and
+**213 texts/s (int8, +43%)**, with lower p99 latency. At light load, a `max_wait_ms`
+larger than the arrival gap is pure added latency (20 ms halves throughput), so keep it
+small. Defaults: int8, `max_batch=64`, `max_wait_ms=5`, token budget 1024. Full grid in
+[docs/bench/embedder.md](docs/bench/embedder.md). p99 from 3-second runs is noisy,
+so trust the trends over single points.
+- **Exactly once:** the relay embeds each batch of `articles.raw`, then writes the
+  vectors and the consumed offsets in **one Kafka transaction**. A crash anywhere
+  either commits both or neither. On error it aborts and exits, and a restart resumes
+  from the last commit. `scripts/chaos/relay.sh` proves this with repeated `kill -9`.
+- **Vectors are computed once.** Downstream consumers and replay read them from
+  `articles.embedded` and never re-embed, because results can shift slightly with
+  batch composition.
+
+`pulse topic check <topic>` counts committed records and duplicate keys in any topic.
 
 ## Local services
 

@@ -1,5 +1,6 @@
 mod doctor;
 mod fixture;
+mod topic;
 
 use std::path::PathBuf;
 
@@ -20,6 +21,15 @@ enum Command {
     /// Golden fixture files.
     #[command(subcommand)]
     Fixture(FixtureCommand),
+    /// Inspect Kafka topics.
+    #[command(subcommand)]
+    Topic(TopicCommand),
+}
+
+#[derive(Subcommand)]
+enum TopicCommand {
+    /// Count committed records and duplicate keys (exits 1 on duplicates).
+    Check { topic: String },
 }
 
 #[derive(Subcommand)]
@@ -45,5 +55,11 @@ async fn main() -> anyhow::Result<()> {
             fixture::record(&settings, since, &out).await
         }
         Command::Fixture(FixtureCommand::Stats { path }) => fixture::stats(&path),
+        Command::Topic(TopicCommand::Check { topic }) => {
+            if !topic::check(&settings, &topic).await? {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
     }
 }

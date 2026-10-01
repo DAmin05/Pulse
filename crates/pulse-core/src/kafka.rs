@@ -61,21 +61,34 @@ pub fn scan_since(
     }
     consumer.assign(&assignment)?;
 
+    // On transactional topics the last offsets can be commit markers, which are
+    // never delivered. So a partition is done when the consumer's *position*
+    // (which skips markers and aborted records) reaches the end, not when we see
+    // a message at end-1.
     let mut count = 0;
+    let mut last_progress = std::time::Instant::now();
     while !ends.is_empty() {
-        let msg = consumer
-            .poll(TIMEOUT)
-            .ok_or_else(|| ScanError::Timeout(topic.to_owned()))??;
-        use rdkafka::Message as _;
-        let Some(&end) = ends.get(&msg.partition()) else {
-            continue;
-        };
-        if msg.offset() < end {
-            f(&msg);
-            count += 1;
+        if let Some(msg) = consumer.poll(Duration::from_millis(200)) {
+            let msg = msg?;
+            use rdkafka::Message as _;
+            if ends
+                .get(&msg.partition())
+                .is_some_and(|&end| msg.offset() < end)
+            {
+                f(&msg);
+                count += 1;
+            }
+            last_progress = std::time::Instant::now();
         }
-        if msg.offset() + 1 >= end {
-            ends.remove(&msg.partition());
+        for elem in consumer.position()?.elements_for_topic(topic) {
+            if let Offset::Offset(pos) = elem.offset() {
+                if ends.get(&elem.partition()).is_some_and(|&end| pos >= end) {
+                    ends.remove(&elem.partition());
+                }
+            }
+        }
+        if last_progress.elapsed() > TIMEOUT {
+            return Err(ScanError::Timeout(topic.to_owned()));
         }
     }
     Ok(count)
@@ -117,7 +130,11 @@ pub fn exactly_once_consumer(brokers: &str, group_id: &str) -> ClientConfig {
         .set("isolation.level", "read_committed")
         .set("enable.auto.commit", "false")
         .set("enable.auto.offset.store", "false")
-        .set("auto.offset.reset", "earliest");
+        .set("auto.offset.reset", "earliest")
+        // A crashed member holds its partitions until its session expires; keep
+        // that short so a restarted instance resumes quickly.
+        .set("session.timeout.ms", "10000")
+        .set("heartbeat.interval.ms", "2000");
     cfg
 }
 

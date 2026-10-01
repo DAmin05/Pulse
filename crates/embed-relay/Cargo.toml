@@ -1,0 +1,24 @@
+[package]
+name = "embed-relay"
+description = "articles.raw → Embedder (gRPC) → articles.embedded, exactly-once via Kafka transactions."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
+futures = "0.3.34"
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.18", default-features = false, features = ["http-listener"] }
+prost.workspace = true
+pulse-core.workspace = true
+rdkafka.workspace = true
+tokio.workspace = true
+tokio-util = "0.7.19"
+tonic = { version = "0.13", default-features = false, features = ["transport"] }
+tracing.workspace = true
+
+[lints]
+workspace = true
