@@ -1,0 +1,15 @@
+[package]
+name = "story-sink"
+description = "Writes committed story events to Postgres idempotently."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+pulse-core.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

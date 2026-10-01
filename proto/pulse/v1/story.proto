@@ -1,0 +1,83 @@
+syntax = "proto3";
+
+package pulse.v1;
+
+// A single change to the story graph, emitted by the Story Processor to
+// `stories.events` inside a Kafka transaction. Kafka key = the primary story id.
+//
+// Every field is a pure function of the input log and the starting checkpoint,
+// so replaying the same range must produce byte-identical events.
+message StoryEvent {
+  // Deterministic: derived from (input_offset, seq).
+  string event_id = 1;
+  // Event time of the input that caused this event, unix epoch milliseconds.
+  int64 event_time_ms = 2;
+  // Processor watermark when this event was emitted, unix epoch milliseconds.
+  int64 watermark_ms = 3;
+  // Offset in `articles.embedded` of the input that caused this event.
+  int64 input_offset = 4;
+  // Position of this event among those caused by the same input.
+  uint32 seq = 5;
+
+  oneof kind {
+    StoryCreated created = 10;
+    ArticleAdded article_added = 11;
+    StoryUpdated updated = 12;
+    StorySplit split = 13;
+    StoryMerged merged = 14;
+    StoryClosed closed = 15;
+  }
+}
+
+message StoryCreated {
+  string story_id = 1;
+  string seed_article_id = 2;
+  string headline = 3;
+  string lang = 4;
+}
+
+message ArticleAdded {
+  string story_id = 1;
+  string article_id = 2;
+  // Similarity-weighted vote score that assigned the article to this story.
+  float score = 3;
+  // True when MinHash LSH matched a near-duplicate already in the story.
+  bool is_duplicate = 4;
+  // Set when is_duplicate is true.
+  string duplicate_of = 5;
+}
+
+message StoryUpdated {
+  string story_id = 1;
+  string headline = 2;
+  string headline_article_id = 3;
+  uint32 article_count = 4;
+  uint32 source_count = 5;
+  repeated string langs = 6;
+  repeated float centroid = 7;
+}
+
+message StorySplit {
+  string parent_story_id = 1;
+  repeated string child_story_ids = 2;
+}
+
+message StoryMerged {
+  repeated string source_story_ids = 1;
+  string target_story_id = 2;
+}
+
+enum CloseReason {
+  CLOSE_REASON_UNSPECIFIED = 0;
+  // No new articles for the idle timeout, measured in event time.
+  CLOSE_REASON_IDLE = 1;
+  // Absorbed into another story by a merge.
+  CLOSE_REASON_MERGED = 2;
+  // Replaced by children after a split.
+  CLOSE_REASON_SPLIT = 3;
+}
+
+message StoryClosed {
+  string story_id = 1;
+  CloseReason reason = 2;
+}

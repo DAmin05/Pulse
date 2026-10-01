@@ -1,0 +1,15 @@
+//! Logging setup. `RUST_LOG` controls filtering (default `info`);
+//! `PULSE_LOG_FORMAT=json` switches to structured output.
+
+use tracing_subscriber::{EnvFilter, fmt};
+
+pub fn init(service: &'static str) {
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let builder = fmt().with_env_filter(filter).with_target(false);
+    if std::env::var("PULSE_LOG_FORMAT").is_ok_and(|v| v == "json") {
+        builder.json().init();
+    } else {
+        builder.init();
+    }
+    tracing::info!(service, version = env!("CARGO_PKG_VERSION"), "starting");
+}

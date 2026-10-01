@@ -1,0 +1,43 @@
+syntax = "proto3";
+
+package pulse.v1;
+
+// Embedding service. Implementations batch concurrent requests dynamically
+// (flush on max batch size or max wait), so callers should send small requests
+// concurrently rather than building large batches themselves.
+service EmbedderService {
+  rpc Embed(EmbedRequest) returns (EmbedResponse);
+  rpc GetModelInfo(GetModelInfoRequest) returns (GetModelInfoResponse);
+}
+
+enum EmbedKind {
+  EMBED_KIND_UNSPECIFIED = 0;
+  // Article text (e5 prefix "passage: ").
+  EMBED_KIND_PASSAGE = 1;
+  // Search query (e5 prefix "query: ").
+  EMBED_KIND_QUERY = 2;
+}
+
+message EmbedRequest {
+  repeated string texts = 1;
+  EmbedKind kind = 2;
+}
+
+message Vector {
+  repeated float values = 1;
+}
+
+message EmbedResponse {
+  // Same order as EmbedRequest.texts. L2-normalized.
+  repeated Vector vectors = 1;
+  string model_version = 2;
+}
+
+message GetModelInfoRequest {}
+
+message GetModelInfoResponse {
+  string model_version = 1;
+  uint32 dimensions = 2;
+  uint32 max_batch = 3;
+  uint32 max_wait_ms = 4;
+}

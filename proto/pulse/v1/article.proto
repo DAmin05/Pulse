@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package pulse.v1;
+
+// Where an article came from.
+enum SourceKind {
+  SOURCE_KIND_UNSPECIFIED = 0;
+  SOURCE_KIND_RSS = 1;
+  SOURCE_KIND_GDELT = 2;
+  SOURCE_KIND_GUARDIAN = 3;
+  SOURCE_KIND_NYT = 4;
+  SOURCE_KIND_HACKER_NEWS = 5;
+}
+
+// A raw article as published by the Ingestor to `articles.raw`.
+// Kafka key = `id`.
+message Article {
+  // Hex sha256 prefix of the canonical URL. Stable across re-polls.
+  string id = 1;
+  // Identifier from sources.toml (e.g. "bbc-mundo").
+  string source_id = 2;
+  SourceKind source_kind = 3;
+  // Canonical URL (tracking params stripped).
+  string url = 4;
+  string title = 5;
+  string summary = 6;
+  // EVENT TIME: publisher timestamp, unix epoch milliseconds.
+  // Falls back to fetched_at_ms when missing or implausible.
+  int64 published_at_ms = 7;
+  // Processing time at the Ingestor, unix epoch milliseconds.
+  int64 fetched_at_ms = 8;
+  // ISO 639-1 language code: feed-declared, otherwise detected.
+  string lang = 9;
+  // True when published_at_ms was clamped or substituted.
+  bool event_time_corrected = 10;
+}
+
+// An article with its embedding, published to `articles.embedded`.
+// This topic is the source of truth for the Story Processor and for replay:
+// vectors are never recomputed downstream.
+message EmbeddedArticle {
+  Article article = 1;
+  repeated float vector = 2;
+  // e.g. "multilingual-e5-small@onnx-fp32".
+  string model_version = 3;
+}

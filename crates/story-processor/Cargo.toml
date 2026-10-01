@@ -1,0 +1,15 @@
+[package]
+name = "story-processor"
+description = "Stateful story clustering with exactly-once semantics and replay mode."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+pulse-core.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

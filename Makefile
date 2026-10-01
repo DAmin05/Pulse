@@ -1,0 +1,80 @@
+SHELL := /bin/bash
+COMPOSE := docker compose -f deploy/docker-compose.yml --env-file .env
+BUF := docker run --rm -v "$(CURDIR):/workspace" -w /workspace bufbuild/buf:1.57.0
+PY := embedder/.venv/bin/python
+
+.DEFAULT_GOAL := help
+
+help: ## Show targets
+	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+
+# --- Stack -------------------------------------------------------------------
+
+.env:
+	cp .env.example .env
+
+env: .env ## Create .env from .env.example if missing
+
+up: .env ## Start the local stack and wait until healthy
+	$(COMPOSE) up -d --wait --wait-timeout 180
+	@$(COMPOSE) run --rm --no-deps redpanda-init
+	@$(COMPOSE) run --rm --no-deps seaweedfs-init 2>&1 | grep -E 'created|exist|error' || true
+
+down: ## Stop the stack (keeps data)
+	$(COMPOSE) down
+
+nuke: ## Stop the stack and delete all data volumes
+	$(COMPOSE) down -v
+
+ps: ## Show stack status
+	$(COMPOSE) ps
+
+logs: ## Follow stack logs
+	$(COMPOSE) logs -f --tail=100
+
+topics: ## List Kafka topics
+	$(COMPOSE) exec redpanda rpk topic list
+
+doctor: ## Verify the stack from the host
+	cargo run -q -p pulse-cli -- doctor
+
+# --- Rust --------------------------------------------------------------------
+
+build: ## Build all Rust crates
+	cargo build --workspace
+
+test: ## Run Rust tests
+	cargo test --workspace
+
+fmt: ## Format Rust code
+	cargo fmt --all
+
+lint: ## Lint Rust code
+	cargo fmt --all -- --check
+	cargo clippy --workspace --all-targets -- -D warnings
+
+# --- Protobuf ----------------------------------------------------------------
+
+proto-lint: ## Lint protobuf schemas with buf
+	$(BUF) lint
+
+# --- Python embedder ---------------------------------------------------------
+
+$(PY):
+	python3 -m venv embedder/.venv
+	$(PY) -m pip install -q --upgrade pip
+	$(PY) -m pip install -q -e 'embedder[dev]'
+
+py-setup: $(PY) ## Create the embedder virtualenv
+
+py-proto: $(PY) ## Generate Python protobuf/gRPC code
+	cd embedder && PATH="$(CURDIR)/embedder/.venv/bin:$$PATH" ./scripts/gen_proto.sh
+
+py-test: py-proto ## Lint and test the embedder
+	cd embedder && .venv/bin/ruff check . && .venv/bin/pytest -q
+
+# --- Everything --------------------------------------------------------------
+
+check: lint test proto-lint py-test ## Run every check CI runs
+
+.PHONY: help env up down nuke ps logs topics doctor build test fmt lint proto-lint py-setup py-proto py-test check

@@ -1,0 +1,24 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: redpanda
+    metrics_path: /public_metrics
+    static_configs:
+      - targets: ["redpanda:9644"]
+
+  # Pulse services run on the host during development.
+  # Metrics ports are fixed per service (see .env.example).
+  - job_name: pulse
+    static_configs:
+      - targets: ["host.docker.internal:9101"]
+        labels: { service: ingestor }
+      - targets: ["host.docker.internal:9102"]
+        labels: { service: embedder }
+      - targets: ["host.docker.internal:9103"]
+        labels: { service: story-processor }
+      - targets: ["host.docker.internal:9104"]
+        labels: { service: story-sink }
+      - targets: ["host.docker.internal:9105"]
+        labels: { service: query-api }

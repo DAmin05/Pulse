@@ -1,0 +1,36 @@
+[project]
+name = "pulse-embedder"
+version = "0.1.0"
+description = "gRPC embedding service for Pulse with dynamic batching over ONNX Runtime."
+requires-python = ">=3.12"
+dependencies = [
+  "grpcio>=1.66",
+  "protobuf>=5.28",
+]
+
+[project.optional-dependencies]
+dev = [
+  "grpcio-tools>=1.66",
+  "pytest>=8",
+  "ruff>=0.6",
+]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Generated protobuf code.
+extend-exclude = ["src/pulse"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
