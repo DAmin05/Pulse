@@ -16,10 +16,21 @@ const ACRONYMS = new Set([
   "de", "pt", "ar", "ru", "zh", "ko", "hi", "ur", "fa", "tr", "id", "vi", "th", "sw", "pl", "el",
 ]);
 
+/** Outlets whose id doesn't spell their name. */
+const NAMES: Record<string, string> = {
+  "globalnews-ca": "Global News",
+  chinanews: "China News Service",
+  bhaskar: "Dainik Bhaskar",
+  asahi: "Asahi Shimbun",
+  aawsat: "Asharq Al-Awsat",
+  sabc: "SABC News",
+};
+
 /** "bbc-world" → "BBC World"; "gdelt-translingual:lemonde.fr" → "lemonde.fr". */
 export function sourceName(id: string): string {
   const colon = id.indexOf(":");
   if (colon >= 0) return id.slice(colon + 1);
+  if (NAMES[id]) return NAMES[id];
   return id
     .split("-")
     .map((w) => (ACRONYMS.has(w) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))

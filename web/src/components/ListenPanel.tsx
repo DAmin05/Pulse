@@ -3,10 +3,11 @@ import { memo, useState } from "react";
 
 import { ApiError } from "../api/client";
 import { useBriefing, useListen } from "../api/hooks";
-import type { Briefing, ListenCapabilities } from "../api/types";
+import type { Briefing, ListenCapabilities, ListenLanguage } from "../api/types";
 import { count, languageName } from "../lib/format";
-import { clock, layout, type SegmentLayout } from "../listen/timing";
+import { clock, layout, pickVoice, type SegmentLayout } from "../listen/timing";
 import { speechSupported, useNarration } from "../listen/useNarration";
+import { useBrowserVoices } from "../listen/voices";
 
 const LANG_KEY = "pulse.listen.lang";
 const VOICE_KEY = "pulse.listen.voice";
@@ -37,6 +38,7 @@ function initialLang(caps: ListenCapabilities | undefined): string {
 /** "Listen in any language": the story briefing, translated and read aloud. */
 export function ListenPanel({ storyId, headline, storyLangs }: { storyId: string; headline: string; storyLangs: string[] }) {
   const caps = useListen();
+  const browserVoices = useBrowserVoices();
   const [chosenLang, setChosenLang] = useState<string | null>(null);
   const [chosenVoice, setChosenVoice] = useState<string | null>(stored(VOICE_KEY));
   const [requested, setRequested] = useState(false);
@@ -51,6 +53,7 @@ export function ListenPanel({ storyId, headline, storyLangs }: { storyId: string
   if (caps.isError || (caps.data && !caps.data.speech && !speechSupported)) return null;
 
   const languages = caps.data?.languages ?? [];
+  const groups = groupLanguages(languages, browserVoices);
   const choose = (next: { lang?: string; voice?: string }) => {
     if (next.lang) {
       setChosenLang(next.lang);
@@ -72,11 +75,18 @@ export function ListenPanel({ storyId, headline, storyLangs }: { storyId: string
           <Languages size={14} aria-hidden />
           <span className="sr-only">Language</span>
           <select value={lang} onChange={(e) => choose({ lang: e.target.value })} disabled={!languages.length}>
-            {languages.map((l) => (
-              <option key={l.code} value={l.code}>
-                {l.native}
-              </option>
-            ))}
+            {groups.map(
+              (g) =>
+                g.languages.length > 0 && (
+                  <optgroup key={g.label} label={g.label}>
+                    {g.languages.map((l) => (
+                      <option key={l.code} value={l.code}>
+                        {l.native === l.name ? l.native : `${l.native} (${l.name})`}
+                      </option>
+                    ))}
+                  </optgroup>
+                ),
+            )}
           </select>
         </label>
         {voices.length > 1 && (
@@ -168,6 +178,10 @@ function Player({
   caps: ListenCapabilities | undefined;
 }) {
   const n = useNarration(briefing, true, headline);
+  const deviceVoices = useBrowserVoices();
+  // Read by the device, but the device has no voice for this language.
+  const transcriptOnly =
+    !briefing.audio && (!speechSupported || (deviceVoices.length > 0 && !pickVoice(deviceVoices, briefing.bcp47)));
   const [items] = useState(() => layout(briefing.segments));
   const playing = n.phase === "playing";
   const busy = n.phase === "loading";
@@ -180,7 +194,7 @@ function Player({
         <button
           className={`listen__play ${playing ? "is-playing" : ""}`}
           onClick={playing ? n.pause : n.play}
-          disabled={busy || n.engine === null}
+          disabled={busy || n.engine === null || transcriptOnly}
           aria-label={playing ? "Pause" : n.phase === "ended" ? "Play again" : "Play"}
         >
           {busy ? (
@@ -193,34 +207,41 @@ function Player({
             <Play size={20} aria-hidden />
           )}
         </button>
-        <div className="listen__lead">
-          <input
-            className="listen__progress"
-            type="range"
-            min={0}
-            max={1000}
-            step={1}
-            value={Math.round(fraction * 1000)}
-            onChange={(e) => n.seekToFraction(Number(e.target.value) / 1000)}
-            aria-label="Position in the briefing"
-            aria-valuetext={n.engine === "audio" ? `${clock(n.position)} of ${clock(n.duration)}` : `${Math.round(fraction * 100)}%`}
-            style={{ "--fill": `${fraction * 100}%` } as React.CSSProperties}
-            disabled={busy}
-          />
-          <span className="listen__times num">
-            {n.engine === "audio" ? (
-              <>
-                <span>{clock(n.position)}</span>
-                <span>{clock(n.duration)}</span>
-              </>
-            ) : (
-              <>
-                <span>{n.phase === "playing" ? "Reading…" : n.phase === "ended" ? "Done" : "Ready"}</span>
-                <span>{Math.round(fraction * 100)}%</span>
-              </>
-            )}
-          </span>
-        </div>
+        {transcriptOnly ? (
+          <div className="listen__lead">
+            <span className="listen__title">Read along below</span>
+            <span className="listen__sub">This device can't speak {languageName(briefing.lang)}.</span>
+          </div>
+        ) : (
+          <div className="listen__lead">
+            <input
+              className="listen__progress"
+              type="range"
+              min={0}
+              max={1000}
+              step={1}
+              value={Math.round(fraction * 1000)}
+              onChange={(e) => n.seekToFraction(Number(e.target.value) / 1000)}
+              aria-label="Position in the briefing"
+              aria-valuetext={n.engine === "audio" ? `${clock(n.position)} of ${clock(n.duration)}` : `${Math.round(fraction * 100)}%`}
+              style={{ "--fill": `${fraction * 100}%` } as React.CSSProperties}
+              disabled={busy}
+            />
+            <span className="listen__times num">
+              {n.engine === "audio" ? (
+                <>
+                  <span>{clock(n.position)}</span>
+                  <span>{clock(n.duration)}</span>
+                </>
+              ) : (
+                <>
+                  <span>{n.phase === "playing" ? "Reading…" : n.phase === "ended" ? "Done" : "Ready"}</span>
+                  <span>{Math.round(fraction * 100)}%</span>
+                </>
+              )}
+            </span>
+          </div>
+        )}
       </div>
 
       <p className="listen__meta">
@@ -240,8 +261,15 @@ function Player({
           </>
         ) : (
           <>
-            <span className="listen__badge listen__badge--browser">Your browser's voice</span>
-            {briefing.fallback && briefing.fallback.reason !== "not_configured" && <span>{briefing.fallback.message}</span>}
+            <span className="listen__badge listen__badge--browser">
+              {transcriptOnly ? "Transcript only" : "Your browser's voice"}
+            </span>
+            {transcriptOnly ? (
+              <span>Pick a language under "Natural voice" to hear it read aloud.</span>
+            ) : (
+              briefing.fallback &&
+              !["not_configured", "no_voice"].includes(briefing.fallback.reason) && <span>{briefing.fallback.message}</span>
+            )}
           </>
         )}
         {briefing.translation && translatedFrom.length > 0 && (
@@ -252,7 +280,7 @@ function Player({
         )}
       </p>
       {briefing.notice && <p className="listen__notice">{briefing.notice}</p>}
-      {n.error && (
+      {n.error && !transcriptOnly && (
         <p className="listen__notice" role="alert">
           {n.error}
         </p>
@@ -315,3 +343,24 @@ const Transcript = memo(function Transcript({
     </ol>
   );
 });
+
+/**
+ * Languages by how they'll sound: a natural ElevenLabs voice, this device's own
+ * voice, or no voice at all (the transcript still works).
+ */
+function groupLanguages(languages: ListenLanguage[], voices: SpeechSynthesisVoice[]) {
+  const natural: ListenLanguage[] = [];
+  const device: ListenLanguage[] = [];
+  const textOnly: ListenLanguage[] = [];
+  for (const l of languages) {
+    if (l.voice_model) natural.push(l);
+    // Until the device lists its voices, assume it may have one.
+    else if (voices.length === 0 || pickVoice(voices, l.bcp47)) device.push(l);
+    else textOnly.push(l);
+  }
+  return [
+    { label: "Natural voice", languages: natural },
+    { label: natural.length ? "This device's voice" : "Read by this device", languages: device },
+    { label: "Transcript only (no voice on this device)", languages: textOnly },
+  ];
+}

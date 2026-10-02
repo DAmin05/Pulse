@@ -93,6 +93,8 @@ pub enum ProviderError {
     Unauthorized,
     Quota,
     RateLimited,
+    /// The request was refused as invalid (400/422), e.g. an unsupported option.
+    Rejected(String),
     Network(String),
     Other(String),
 }
@@ -123,6 +125,8 @@ impl ProviderError {
                 Self::Unauthorized
             } else if status.as_u16() == 429 {
                 Self::RateLimited
+            } else if status.as_u16() == 400 || status.as_u16() == 422 {
+                Self::Rejected(format!("{status}: {body}"))
             } else {
                 Self::Other(format!("{status}: {body}"))
             },
@@ -134,7 +138,7 @@ impl ProviderError {
             Self::Unauthorized => "unauthorized",
             Self::Quota => "quota",
             Self::RateLimited => "rate_limited",
-            Self::Network(_) | Self::Other(_) => "provider_error",
+            Self::Rejected(_) | Self::Network(_) | Self::Other(_) => "provider_error",
         }
     }
 }
@@ -145,7 +149,7 @@ impl fmt::Display for ProviderError {
             Self::Unauthorized => f.write_str("the API key was rejected"),
             Self::Quota => f.write_str("the provider's quota is used up"),
             Self::RateLimited => f.write_str("rate limited by the provider"),
-            Self::Network(e) | Self::Other(e) => f.write_str(e),
+            Self::Rejected(e) | Self::Network(e) | Self::Other(e) => f.write_str(e),
         }
     }
 }
@@ -198,10 +202,20 @@ pub async fn capabilities(
         }),
         None => Value::Null,
     };
-    Ok(Json(json!({
-        "languages": langs::LANGUAGES.iter().map(|l| json!({
+    let mut languages = Vec::with_capacity(langs::LANGUAGES.len());
+    for l in langs::LANGUAGES {
+        // Which ElevenLabs model reads it, if any (else the browser's voice).
+        let model = match &listen.speech {
+            Some(s) => s.model_for(l).await,
+            None => None,
+        };
+        languages.push(json!({
             "code": l.code, "name": l.name, "native": l.native, "bcp47": l.bcp47,
-        })).collect::<Vec<_>>(),
+            "voice_model": model,
+        }));
+    }
+    Ok(Json(json!({
+        "languages": languages,
         "translation": translation,
         "speech": speech,
         "max_chars": listen.max_chars,
@@ -260,11 +274,20 @@ pub async fn briefing(
                         "Translation unavailable ({e}); using {} sources only.",
                         lang.name
                     ));
-                    (native_only(&story, lang, listen.max_chars)?, None)
+                    let why = format!("translation failed ({e})");
+                    (native_only(&story, lang, listen.max_chars, &why)?, None)
                 }
             }
         }
-        None => (native_only(&story, lang, listen.max_chars)?, None),
+        None => (
+            native_only(
+                &story,
+                lang,
+                listen.max_chars,
+                "translation isn't configured (set DEEPL_API_KEY)",
+            )?,
+            None,
+        ),
     };
     let text = segments
         .iter()
@@ -291,6 +314,7 @@ pub async fn briefing(
                 match speak(&**c, listen, tts, &id, lang, req.voice.as_deref(), &text).await {
                     Ok(audio) => (Some(audio), None),
                     Err(SpeakError::Budget(message)) => (None, Some(("budget", message))),
+                    Err(SpeakError::NoVoice(message)) => (None, Some(("no_voice", message))),
                     Err(SpeakError::Provider(e)) => {
                         tracing::warn!(error = %e, "speech synthesis failed");
                         (
@@ -339,14 +363,17 @@ struct Translated {
     translated: bool,
 }
 
+/// A briefing from coverage already in `lang`; `why` says why translation
+/// isn't being used, for when there's none.
 fn native_only(
     story: &Story,
     lang: &Language,
     max_chars: usize,
+    why: &str,
 ) -> Result<Vec<Translated>, ApiError> {
     let segments = briefing::compose(story, lang.code, false, max_chars).ok_or_else(|| {
         ApiError::unprocessable(format!(
-            "No {} coverage of this story, and translation isn't configured (set DEEPL_API_KEY).",
+            "No {} coverage of this story, and {why}.",
             lang.name
         ))
     })?;
@@ -448,6 +475,7 @@ async fn translate(
 
 enum SpeakError {
     Budget(String),
+    NoVoice(String),
     Provider(ProviderError),
     Internal(anyhow::Error),
 }
@@ -477,7 +505,13 @@ async fn speak(
         .iter()
         .find(|v| v.id == voice)
         .map(|v| v.name.clone());
-    let key = sha256(&["elevenlabs", &tts.model, &voice, lang.code, text]);
+    let model = tts.model_for(lang).await.ok_or_else(|| {
+        SpeakError::NoVoice(format!(
+            "ElevenLabs has no {} voice; your browser's voice reads it if this device has one.",
+            lang.name
+        ))
+    })?;
+    let key = sha256(&["elevenlabs", &model, &voice, lang.code, text]);
     let describe = |a: &cache::Audio, cached: bool| {
         json!({
             "url": format!("/api/audio/{}", a.key),
@@ -516,7 +550,7 @@ async fn speak(
     }
 
     let speech = tts
-        .synthesize(text, &voice, lang)
+        .synthesize(text, &voice, lang, &model)
         .await
         .map_err(SpeakError::Provider)?;
     // Count the characters as soon as they're spent, even if storing fails.
@@ -528,7 +562,7 @@ async fn speak(
         story_id: story_id.to_owned(),
         lang: lang.code.to_owned(),
         provider: "elevenlabs".into(),
-        model: tts.model.clone(),
+        model,
         voice,
         text: text.to_owned(),
         characters: characters as i32,

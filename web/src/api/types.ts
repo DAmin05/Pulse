@@ -233,6 +233,8 @@ export interface ListenLanguage {
   name: string;
   native: string;
   bcp47: string;
+  /** The ElevenLabs model that reads it, or null: the device's voice (if any) does. */
+  voice_model: string | null;
 }
 
 export interface ListenVoice {

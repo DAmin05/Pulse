@@ -1,6 +1,6 @@
 # Pulse
 
-Pulse reads the news from 133 sources in 24 languages as it's published, and
+Pulse reads the news from 140 sources in 24 languages as it's published, and
 groups articles about the same event into **stories**, even when they're written
 in different languages. You can watch stories appear, grow, split apart and merge
 in real time, scroll back to any moment in the past, and listen to a short spoken
@@ -38,7 +38,7 @@ re-run any past hour and check that it produces exactly the same result.
 - **Go back in time.** Drag the timeline to see exactly what the news looked like at any earlier moment.
 - **Search in any language.** Type in Spanish and find the English, French or Arabic coverage of the same event.
 - **Check that it's correct.** Press "Re-run this hour" and Pulse processes that hour again from scratch and proves it gets the identical result.
-- **Listen.** Hear a 30-second summary of a story, translated into your language.
+- **Listen.** Hear a 30-second summary of a story, translated into any of 71 languages: the main language of nearly every country.
 - **See it working.** A live panel shows how fast articles flow through each step.
 
 ## Run it on your computer
@@ -174,7 +174,7 @@ allowance it uses each day, and playing the same summary again is free.
 
 ```mermaid
 flowchart LR
-    RSS[RSS feeds<br/>133 sources · 24 languages] -->|polls| ING[Ingestor<br/>Rust]
+    RSS[RSS feeds<br/>140 sources · 24 languages] -->|polls| ING[Ingestor<br/>Rust]
     ING -->|articles.raw| K{{Redpanda<br/>Kafka API}}
     K -->|articles.raw| REL[Embed relay<br/>Rust]
     REL -->|gRPC| EMB[Embedder<br/>Python · ONNX]
@@ -197,6 +197,10 @@ In plain terms, an article goes through six steps:
 
 1. **Ingestor** checks each news feed every few minutes, politely. It gives every
    article an ID based on its web address, so the same article is never added twice.
+   The feeds include at least one home-grown outlet, in its main language, for
+   every G20 member: from Global News (Canada) and SABC (South Africa) to Asahi
+   Shimbun (Japan), Dainik Bhaskar (India), China News Service, Interfax (Russia)
+   and Asharq Al-Awsat (Saudi Arabia).
 2. **Kafka** (run locally with Redpanda) is the backbone: an ordered, permanent log
    that every step reads from and writes to. Because it's a log, any step can be
    stopped and restarted and pick up exactly where it left off.
@@ -378,9 +382,26 @@ credited by name. It prefers articles already written in your language (no
 translation needed), skips near-identical summaries, and tidies up feed text such
 as "LONDON (Reuters) -" prefixes.
 
-**Translation** (DeepL) is only used for the parts not already in your language.
-**Voice** comes from ElevenLabs, which also reports when each word is spoken,
-which is what drives the highlighting.
+**71 languages**, one main language for nearly every country in the world, from
+Afrikaans to Zulu. **Translation** (DeepL) is only used for the parts not already
+in your language. **Voice** comes from ElevenLabs, which also reports when each
+word is spoken, which is what drives the highlighting. Each language uses the
+cheapest voice model that speaks it:
+
+| how it sounds | languages |
+|---|---|
+| Natural voice, ElevenLabs Flash v2.5 (half the cost) | 32, including English, Spanish, French, Arabic, Chinese, Hindi, Japanese, Russian |
+| Natural voice, ElevenLabs Eleven v3 | 26 more, including Bengali, Persian, Swahili, Thai, Urdu, Hebrew, Hausa |
+| Your device's own voice, if it has one | 13: Albanian, Burmese, Guarani, Haitian Creole, Malagasy, Maltese, Mongolian, Sesotho, Setswana, Tajik, Turkmen, Uzbek, Zulu |
+
+The language picker groups languages this way, so you know what you'll hear. If
+your device has no voice for a language, you get the translated transcript to
+read instead. A few languages can't be offered yet because DeepL can't translate
+into them: Amharic, Somali, Khmer, Lao, Sinhala, Kinyarwanda, Tigrinya, Dzongkha
+and Dhivehi.
+
+If your ElevenLabs key has the *Models: read* permission, Pulse asks ElevenLabs
+which languages each model speaks; otherwise it uses ElevenLabs' published lists.
 
 **Keeping costs down.** Translations and recordings are saved and reused, so
 asking for the same summary again is instant and free (24 ms in testing, with no
@@ -392,6 +413,8 @@ fails, your browser's built-in voice reads the summary instead.
 |---|---|---|
 | `DEEPL_API_KEY` | none | DeepL key; free keys end in `:fx` |
 | `ELEVENLABS_API_KEY` | none | ElevenLabs key; the free plan requires crediting ElevenLabs, which the player does |
+| `PULSE_TTS_MODEL` | `eleven_flash_v2_5` | preferred voice model, used for every language it speaks |
+| `PULSE_TTS_MODEL_WIDE` | `eleven_v3` | voice model for the languages the preferred one doesn't speak |
 | `PULSE_TTS_DAILY_CHARS` | 3000 | most characters to send for speech per day |
 | `PULSE_TRANSLATE_MONTHLY_CHARS` | 400000 | most characters to translate per month (DeepL Free allows 500,000) |
 | `PULSE_BRIEFING_MAX_CHARS` | 520 | summary length, about 30 seconds |

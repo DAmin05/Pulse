@@ -981,6 +981,59 @@ category = "world"
 region = "de"
 
 
+# --- G20: a home-grown outlet in each member's main language ---
+# Fills the members that otherwise had none (the rest are covered above).
+
+[[source]]
+id = "globalnews-ca"
+url = "https://globalnews.ca/feed/"
+lang = "en"
+category = "general"
+region = "ca"
+
+[[source]]
+id = "chinanews"
+url = "https://www.chinanews.com.cn/rss/scroll-news.xml"
+lang = "zh"
+category = "general"
+region = "cn"
+
+[[source]]
+id = "bhaskar"
+url = "https://www.bhaskar.com/rss-v1--category-1061.xml"
+lang = "hi"
+category = "general"
+region = "in"
+
+[[source]]
+id = "asahi"
+url = "https://www.asahi.com/rss/asahi/newsheadlines.rdf"
+lang = "ja"
+category = "general"
+region = "jp"
+
+[[source]]
+id = "interfax"
+url = "https://www.interfax.ru/rss.asp"
+lang = "ru"
+category = "general"
+region = "ru"
+
+[[source]]
+id = "aawsat"
+url = "https://aawsat.com/feed"
+lang = "ar"
+category = "general"
+region = "sa"
+
+[[source]]
+id = "sabc"
+url = "https://www.sabcnews.com/sabcnews/feed/"
+lang = "en"
+category = "general"
+region = "za"
+
+
 # --- GDELT (opt-in: high volume, mostly local news, headline-only) ---
 # For load tests, prefer `ingestor backfill-gdelt` into a fixture file.
 

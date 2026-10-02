@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Briefing } from "../api/types";
+import { languageName } from "../lib/format";
 import { layout, pickVoice, wordAt } from "./timing";
 
 export type Engine = "audio" | "browser";
@@ -33,6 +34,8 @@ export function useNarration(briefing: Briefing | undefined, autoplay: boolean, 
   const engine: Engine | null = !briefing ? null : briefing.audio ? "audio" : speechSupported ? "browser" : null;
   const [phase, setPhase] = useState<Phase>("loading");
   const [time, setTime] = useState(0);
+  // From the file itself, for audio that came without word timings.
+  const [mediaDuration, setMediaDuration] = useState(0);
   const [spoken, setSpoken] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -54,6 +57,7 @@ export function useNarration(briefing: Briefing | undefined, autoplay: boolean, 
     const audio = new Audio();
     audio.preload = "auto";
     audioRef.current = audio;
+    audio.onloadedmetadata = () => setMediaDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
     audio.onplay = () => setPhase("playing");
     audio.onpause = () => setPhase((p) => (p === "ended" ? p : "paused"));
     audio.onended = () => setPhase("ended");
@@ -123,7 +127,15 @@ export function useNarration(briefing: Briefing | undefined, autoplay: boolean, 
       const synth = window.speechSynthesis;
       const gen = ++generation.current;
       synth.cancel();
-      const voice = pickVoice(synth.getVoices(), briefing.bcp47);
+      const installed = synth.getVoices();
+      const voice = pickVoice(installed, briefing.bcp47);
+      // Voices are listed but none speaks this language: reading it with another
+      // language's voice would be gibberish, so leave it to the transcript.
+      if (installed.length > 0 && !voice) {
+        setPhase("error");
+        setError(`This device has no ${languageName(briefing.lang)} voice. The transcript is below.`);
+        return;
+      }
       // One utterance per segment: long utterances get cut off in some browsers.
       const queue = items.filter((it) => it.end > offset);
       queue.forEach((it, i) => {
@@ -166,7 +178,8 @@ export function useNarration(briefing: Briefing | undefined, autoplay: boolean, 
   }, [browserText, speakFrom, silence]);
 
   // --- Interface ---------------------------------------------------------------
-  const duration = engine === "audio" ? (briefing?.audio?.duration ?? 0) : (briefing?.text.length ?? 0);
+  const duration =
+    engine === "audio" ? briefing?.audio?.duration || mediaDuration : (briefing?.text.length ?? 0);
   const words = briefing?.audio?.words;
   const audioActive = engine === "audio" && words && phase !== "loading" ? (words[wordAt(words, time)]?.[0] ?? null) : null;
   const activeOffset = engine === "audio" ? audioActive : spoken;
@@ -199,9 +212,10 @@ export function useNarration(briefing: Briefing | undefined, autoplay: boolean, 
 
   const seekToOffset = useCallback(
     (offset: number) => {
-      if (engine === "audio" && words && audioRef.current) {
-        const w = words.find(([o]) => o >= offset);
-        audioRef.current.currentTime = w ? w[1] : 0;
+      if (engine === "audio" && audioRef.current) {
+        const w = words?.find(([o]) => o >= offset);
+        // Without word timings, estimate from the position in the text.
+        audioRef.current.currentTime = w ? w[1] : (offset / Math.max(1, briefing?.text.length ?? 1)) * duration;
         setTime(audioRef.current.currentTime);
         if (audioRef.current.paused) audioRef.current.play().catch(() => setPhase("paused"));
       } else if (engine === "browser") {
@@ -209,7 +223,7 @@ export function useNarration(briefing: Briefing | undefined, autoplay: boolean, 
         speakFrom(offset);
       }
     },
-    [engine, words, speakFrom],
+    [engine, words, speakFrom, briefing, duration],
   );
 
   const seekToFraction = useCallback(

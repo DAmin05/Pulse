@@ -1,5 +1,11 @@
 //! Text to speech via ElevenLabs, with character timings for the transcript.
+//!
+//! Each language is read by the cheapest model that speaks it: the primary
+//! model (Flash v2.5: 32 languages, half the credits) or the wide one (Eleven
+//! v3: 70+ languages). Which model speaks what comes from the account's model
+//! list, falling back to the published lists in [`super::langs`].
 
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -10,12 +16,16 @@ use serde_json::json;
 use tokio::sync::Mutex;
 
 use super::ProviderError;
-use super::langs::Language;
+use super::langs::{self, Language};
 use super::translate::non_empty;
 
 /// A premade voice that reads every supported language.
 pub const DEFAULT_VOICE: &str = "JBFqnCBsd6RMkjVDRZzb";
 const VOICES_TTL: Duration = Duration::from_secs(3600);
+const MODELS_TTL: Duration = Duration::from_secs(3600);
+
+/// Model id → the language codes it speaks.
+type ModelLanguages = HashMap<String, HashSet<String>>;
 const SUBSCRIPTION_TTL: Duration = Duration::from_secs(300);
 const MAX_VOICES: usize = 12;
 
@@ -45,9 +55,14 @@ pub struct ElevenLabs {
     http: reqwest::Client,
     url: String,
     key: String,
+    /// Preferred model, used for every language it speaks.
     pub model: String,
+    /// For languages the preferred model doesn't speak.
+    pub wide_model: String,
     pub default_voice: String,
     voices: Mutex<Option<(Instant, Vec<Voice>)>>,
+    /// Which languages each model speaks, from the account.
+    models: Mutex<Option<(Instant, ModelLanguages)>>,
     subscription: Mutex<Option<(Instant, Option<Subscription>)>>,
 }
 
@@ -59,11 +74,19 @@ impl ElevenLabs {
             non_empty("ELEVENLABS_API_KEY")?,
             // Flash v2.5: 32 languages, low latency, half the credits of Multilingual v2.
             env_or("PULSE_TTS_MODEL", "eleven_flash_v2_5"),
+            // Eleven v3: 70+ languages, for the rest.
+            env_or("PULSE_TTS_MODEL_WIDE", "eleven_v3"),
             env_or("PULSE_TTS_VOICE", DEFAULT_VOICE),
         ))
     }
 
-    pub fn new(url: String, key: String, model: String, default_voice: String) -> Self {
+    pub fn new(
+        url: String,
+        key: String,
+        model: String,
+        wide_model: String,
+        default_voice: String,
+    ) -> Self {
         Self {
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(60))
@@ -72,10 +95,79 @@ impl ElevenLabs {
             url,
             key,
             model,
+            wide_model,
             default_voice,
             voices: Mutex::new(None),
+            models: Mutex::new(None),
             subscription: Mutex::new(None),
         }
+    }
+
+    /// The model to read `lang` with: the preferred one if it speaks the
+    /// language, else the wide one, else none (the browser reads it).
+    pub async fn model_for(&self, lang: &Language) -> Option<String> {
+        let known = self.model_languages().await;
+        [&self.model, &self.wide_model]
+            .into_iter()
+            .find(|m| match known.get(m.as_str()) {
+                Some(codes) => codes.contains(lang.code),
+                None => published_languages(m).contains(&lang.code),
+            })
+            .cloned()
+    }
+
+    /// Languages per model, from the account (cached); empty if unavailable.
+    async fn model_languages(&self) -> ModelLanguages {
+        let mut cache = self.models.lock().await;
+        if let Some((at, models)) = cache.as_ref()
+            && at.elapsed() < MODELS_TTL
+        {
+            return models.clone();
+        }
+        #[derive(Deserialize)]
+        struct Model {
+            model_id: String,
+            #[serde(default)]
+            languages: Vec<ModelLanguage>,
+        }
+        #[derive(Deserialize)]
+        struct ModelLanguage {
+            language_id: String,
+        }
+        let fetched = async {
+            let response = self
+                .http
+                .get(format!("{}/v1/models", self.url))
+                .header("xi-api-key", &self.key)
+                .send()
+                .await
+                .map_err(ProviderError::network)?;
+            ProviderError::check(response)
+                .await?
+                .json::<Vec<Model>>()
+                .await
+                .map_err(ProviderError::network)
+        }
+        .await;
+        let models = match fetched {
+            Ok(list) => list
+                .into_iter()
+                .map(|m| {
+                    let codes = m
+                        .languages
+                        .iter()
+                        .map(|l| langs::base(&l.language_id).to_lowercase())
+                        .collect();
+                    (m.model_id, codes)
+                })
+                .collect(),
+            Err(e) => {
+                tracing::debug!(error = %e, "listing ElevenLabs models failed; using published lists");
+                HashMap::new()
+            }
+        };
+        *cache = Some((Instant::now(), models.clone()));
+        models
     }
 
     pub async fn synthesize(
@@ -83,16 +175,64 @@ impl ElevenLabs {
         text: &str,
         voice: &str,
         lang: &Language,
+        model: &str,
+    ) -> Result<Speech, ProviderError> {
+        let mut body = json!({ "text": text, "model_id": model });
+        // A language hint helps short texts; Multilingual v2 rejects it.
+        if !model.contains("multilingual_v2") {
+            body["language_code"] = json!(langs::elevenlabs_code(lang.code));
+        }
+        let speech = match self.with_timestamps(&body, text, voice).await {
+            // Models without character alignment: plain audio, no word timings.
+            Err(ProviderError::Rejected(why)) => {
+                tracing::debug!(model, why, "timestamps unavailable; requesting plain audio");
+                self.plain(&body, voice).await?
+            }
+            other => other?,
+        };
+        // Invalidate the cached quota: this request used some.
+        *self.subscription.lock().await = None;
+        Ok(speech)
+    }
+
+    async fn plain(&self, body: &serde_json::Value, voice: &str) -> Result<Speech, ProviderError> {
+        let response = self
+            .http
+            .post(format!(
+                "{}/v1/text-to-speech/{voice}?output_format=mp3_44100_128",
+                self.url
+            ))
+            .header("xi-api-key", &self.key)
+            .json(body)
+            .send()
+            .await
+            .map_err(ProviderError::network)?;
+        let audio = ProviderError::check(response)
+            .await?
+            .bytes()
+            .await
+            .map_err(ProviderError::network)?;
+        if audio.is_empty() {
+            return Err(ProviderError::Other("empty audio".into()));
+        }
+        Ok(Speech {
+            audio,
+            content_type: "audio/mpeg",
+            words: Vec::new(),
+            duration: 0.0,
+        })
+    }
+
+    async fn with_timestamps(
+        &self,
+        body: &serde_json::Value,
+        text: &str,
+        voice: &str,
     ) -> Result<Speech, ProviderError> {
         #[derive(Deserialize)]
         struct Response {
             audio_base64: String,
             alignment: Option<Alignment>,
-        }
-        let mut body = json!({ "text": text, "model_id": self.model });
-        // Only the v2.5 models accept a language hint; others infer it from the text.
-        if self.model.ends_with("v2_5") {
-            body["language_code"] = json!(lang.code);
         }
         let response = self
             .http
@@ -101,7 +241,7 @@ impl ElevenLabs {
                 self.url
             ))
             .header("xi-api-key", &self.key)
-            .json(&body)
+            .json(body)
             .send()
             .await
             .map_err(ProviderError::network)?;
@@ -117,8 +257,6 @@ impl ElevenLabs {
             return Err(ProviderError::Other("empty audio".into()));
         }
         let (words, duration) = r.alignment.map(|a| a.word_starts(text)).unwrap_or_default();
-        // Invalidate the cached quota: this request used some.
-        *self.subscription.lock().await = None;
         Ok(Speech {
             audio: audio.into(),
             content_type: "audio/mpeg",
@@ -262,6 +400,20 @@ impl ElevenLabs {
         };
         *cache = Some((Instant::now(), s));
         s
+    }
+}
+
+/// Languages a model speaks according to ElevenLabs' published lists.
+fn published_languages(model: &str) -> &'static [&'static str] {
+    if model.contains("flash_v2_5") || model.contains("turbo_v2_5") {
+        langs::FLASH_V2_5
+    } else if model.starts_with("eleven_v3") {
+        langs::V3
+    } else if model.contains("multilingual_v2") {
+        // Flash v2.5's list minus the three it added.
+        &langs::FLASH_V2_5[..29]
+    } else {
+        &[]
     }
 }
 

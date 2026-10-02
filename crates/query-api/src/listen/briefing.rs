@@ -349,6 +349,13 @@ const BRANDS: &[(&str, &str)] = &[
     ("yonhap", "Yonhap"),
     ("zeit", "Die Zeit"),
     ("20minutos", "20minutos"),
+    ("globalnews", "Global News"),
+    ("chinanews", "China News Service"),
+    ("bhaskar", "Dainik Bhaskar"),
+    ("asahi", "Asahi Shimbun"),
+    ("interfax", "Interfax"),
+    ("aawsat", "Asharq Al-Awsat"),
+    ("sabc", "SABC News"),
 ];
 
 /// Feed sections, not part of an outlet's name ("nyt-world" is The New York Times).
@@ -625,6 +632,8 @@ mod tests {
         assert_eq!(speakable_source("bbc-turkce"), "BBC Türkçe");
         assert_eq!(speakable_source("abc-us-intl"), "ABC News");
         assert_eq!(speakable_source("pravda-ua"), "Ukrainska Pravda");
+        assert_eq!(speakable_source("aawsat"), "Asharq Al-Awsat");
+        assert_eq!(speakable_source("globalnews-ca"), "Global News");
         assert_eq!(speakable_source("some-new-feed-en"), "Some New Feed");
         assert_eq!(
             speakable_source("gdelt-translingual:lemonde.fr"),
