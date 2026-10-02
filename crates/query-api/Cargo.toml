@@ -19,6 +19,7 @@ pulse-store = { version = "0.1.0", path = "../pulse-store" }
 rdkafka.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json = "1.0.151"
+story-processor = { version = "0.1.0", path = "../story-processor" }
 tokio.workspace = true
 tokio-stream = "0.1.19"
 toml = "1.1.6"

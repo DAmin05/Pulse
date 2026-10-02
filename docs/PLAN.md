@@ -237,7 +237,7 @@ Time travel:
 | 4 | Correctness | Watermarks (24h lateness), late routing, event-time housekeeping + bounded state, epoch transactions, log-structured snapshots + silent replay | ✅ Restore-anywhere property test; chaos test byte-identical after 50 kill -9s (in CI) |
 | 5 | Split / merge | Log-position lineage checks on dirty stories, 2-means splits, centroid + anchor-word merges, hysteresis + cooldown, lineage in events | ✅ RSS: 4/4 merges correct, 0 false splits; GDELT reviewed (template limitation documented); restore-exact with lineage; chaos PASS |
 | 6 | Sink + API | Exactly-once sink (offsets in the DB txn), offset-versioned memberships, Axum REST, NOTIFY-fed resumable SSE, search, graph, timeline, stats, `make pipeline` | ✅ Live RSS → SSE end to end; resume exact; time travel through merge/split tested; idempotent re-apply tested |
-| 7 | Replay | Replay mode, checkpoint index, diff service | "Replay last hour → 0 diffs" via API |
+| 7 | Replay | Snapshot-or-scratch warm-up, byte-for-byte ordered diff of events + late articles, isolated output topic, API Replay Service (queued, persisted), perturbation control | ✅ Whole live history identical (4,912 events); windows identical; perturbed run caught; replays in CI |
 | 8 | Frontend | Story graph, time-travel slider, metrics panel, story drawer | Demo items 1–5 work in the browser |
 | 9 | Listen | Translation + ElevenLabs briefing endpoint, cache, budget, Web Speech fallback, player UI | Play a story in ≥3 languages; cached replays cost no credits |
 | 10 | Polish | README, architecture diagram, benchmark and exactly-once write-ups, demo video | A stranger can clone and run the demo |

@@ -7,4 +7,5 @@ pub mod engine;
 mod lineage;
 pub mod live;
 pub mod minhash;
+pub mod replay;
 pub mod snapshot;

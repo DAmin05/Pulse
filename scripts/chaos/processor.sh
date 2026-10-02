@@ -105,6 +105,19 @@ for kind in events late; do
 done
 "$PULSE" topic check "test.$RUN.chaos.events" >/dev/null || { echo "  duplicate event ids in chaos output"; fail=1; }
 
+# Replay the second half of each run against its committed output: the clean
+# run warms up from the log's start, the chaos run from one of its snapshots.
+for v in clean chaos; do
+  if env PULSE_PROCESSOR_GROUP="$RUN-$v" PULSE_PROCESSOR_INPUT_TOPIC="$IN" \
+      PULSE_PROCESSOR_OUTPUT_TOPIC="test.$RUN.$v.events" PULSE_PROCESSOR_LATE_TOPIC="test.$RUN.$v.late" \
+      PULSE_PROCESSOR_SNAPSHOT_DIR="$TMP/$v" RUST_LOG=warn \
+      "$PROC" replay --from $((END / 2)) >"$TMP/replay-$v.json" 2>"$TMP/replay-$v.txt"; then
+    echo "  replay ($v, second half): $(grep '^events' "$TMP/replay-$v.txt")"
+  else
+    echo "  replay ($v) DIFFERENT:"; sed 's/^/    /' "$TMP/replay-$v.txt"; fail=1
+  fi
+done
+
 if ((fail)); then
   echo "FAIL (kept topics test.$RUN.*; logs in $TMP)"
   exit 1

@@ -55,6 +55,30 @@ pub struct LiveConfig {
 /// Builds the engine config once the input's model version is known.
 pub type ConfigFor = Box<dyn FnOnce(&str) -> Result<Config> + Send>;
 
+/// The engine configuration the live processor runs with: defaults plus the
+/// frozen centering for the input's model (`PULSE_CENTERING` overrides the
+/// path). Replay builds its engine the same way, so fingerprints match.
+pub fn production_config(model_version: &str) -> Result<Config> {
+    let path = std::env::var("PULSE_CENTERING")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| crate::centering::default_path(model_version));
+    let centering = if path.exists() {
+        Some(std::sync::Arc::new(crate::centering::Centering::load(
+            &path,
+        )?))
+    } else {
+        tracing::warn!(
+            "no centering file at {}; clustering raw vectors",
+            path.display()
+        );
+        None
+    };
+    Ok(Config {
+        centering,
+        ..Config::default()
+    })
+}
+
 pub async fn run(
     cfg: LiveConfig,
     config_for: ConfigFor,

@@ -98,6 +98,9 @@ pipeline: ## Run every service (ingest → embed → process → sink → API); 
 test-db: ## Read-model integration tests against the local Postgres
 	PULSE_TEST_DATABASE_URL=$${PULSE_DATABASE_URL:-postgres://pulse:pulse@localhost:5432/pulse} cargo test -p pulse-store
 
+replay: ## Re-drive input offsets [FROM, TO) and diff against live output (exit 1 if different)
+	cargo run -q -p story-processor --release -- replay $(if $(FROM),--from $(FROM)) $(if $(TO),--to $(TO))
+
 EMBEDDED ?= data/fixtures/smoke.pulseem
 cluster-eval: ## Cluster an embedded fixture and print story quality (EMBEDDED=...)
 	cargo run -q -p story-processor --release -- eval --fixture $(EMBEDDED) --top 10 --audit 10

@@ -269,6 +269,7 @@ latest position, so live views and time travel share one code path.
 | `GET /api/timeline?buckets=` | Articles / new stories / splits / merges / closes per time bucket, with the offset to jump to |
 | `GET /api/stats` | Totals, Kafka end offsets, sink position and lag per topic |
 | `GET /api/sources` | Feed catalog with article counts and last fetch |
+| `POST /api/replays` · `GET /api/replays[/{id}]` | Re-drive a window of the input log and diff it against the live output (see Replay) |
 | `GET /api/stream` | **SSE** of committed story events (`event: story`, `id: <offset>:<seq>`); resume with `Last-Event-ID` or `?after=` |
 | `GET /metrics` | Prometheus (request latency per route, live clients) |
 
@@ -281,6 +282,40 @@ then continues live.
 Verified live: with `make pipeline`, 846 fresh articles flowed from RSS to the SSE
 stream in 4 minutes (622 new stories, 220 joins, 2 live merges), with zero warnings
 from any service and sink lag 0.
+
+## Replay: proving determinism on live data
+
+```bash
+make replay                       # whole history vs what the live processor committed
+make replay FROM=4500             # a window (input offsets), warmed up from a live snapshot
+story-processor replay --from-time 2026-10-01T22:34:00Z --output-topic replay.x.stories
+story-processor replay --perturb-neighbor-similarity 0.49   # shows the diff catching a change
+curl -X POST localhost:9105/api/replays -d '{"from_time":"…","to_time":"…"}' -H 'content-type: application/json'
+```
+
+A replay restores the newest live snapshot at or before `from` (or starts from the
+log's beginning, which is always valid), silently processes up to `from`, then
+re-drives `[from, to)`. It compares the result **byte for byte, in order** with the
+events the live processor committed to `stories.events` for the same inputs, and
+with the articles it routed to `articles.late`. `to` is clamped to the live
+processor's committed offset. The report gives counts, an order-sensitive hash of
+each side, and the first divergence if any. Replays only read live topics; they can
+write to an isolated `replay.<id>.stories` topic (24h retention) with the same
+format as live output.
+
+On the live history (the cold-start backlog plus live RSS, with the processor
+restarted from snapshots several times along the way):
+
+| replay | warm-up | events | late | result |
+|---|---|---:|---:|---|
+| whole history `[0, 5037)` | from scratch | 4,912 / 4,912 | 704 / 704 | **identical** (6.1 s) |
+| `[4500, 5037)` | snapshot @4020 + 404 inputs | 513 / 513 | 1 / 1 | **identical** (2.3 s) |
+| whole history, `neighbor_similarity` 0.50 → 0.49 | from scratch | 928 / 4,912 match | 702 / 704 | **different**: first at input 413, same join with a different vote score |
+
+The perturbed run is the control: a diff that can't fail proves nothing. Through
+the API, replays run one at a time in the background, their reports are stored in
+Postgres, and runs interrupted by an API restart are marked failed. CI runs replays
+of both the clean and the crash-tested processor output inside the chaos test.
 
 ## Local services
 

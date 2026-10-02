@@ -112,6 +112,19 @@ pub async fn offset_at(c: &impl GenericClient, time: DateTime<Utc>) -> Result<i6
     Ok(row.get(0))
 }
 
+/// First position fetched at or after a time (the end if none is that recent).
+pub async fn offset_from(c: &impl GenericClient, time: DateTime<Utc>) -> Result<i64> {
+    let row = c
+        .query_one(
+            "SELECT COALESCE(MIN(input_offset),
+                             (SELECT COALESCE(MAX(input_offset) + 1, 0) FROM articles))
+             FROM articles WHERE fetched_at >= $1",
+            &[&time],
+        )
+        .await?;
+    Ok(row.get(0))
+}
+
 /// Pipeline time at a position: when its input was fetched.
 pub async fn time_at(c: &impl GenericClient, at: i64) -> Result<Option<DateTime<Utc>>> {
     let row = c

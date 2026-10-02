@@ -30,6 +30,32 @@ enum Command {
     /// Live mode: articles.embedded → stories.events, exactly once (env-configured;
     /// see .env.example).
     Run,
+    /// Re-drive a window of the live input log and diff the output against what
+    /// the live processor committed. Exits 1 if they differ.
+    Replay {
+        /// First input offset (inclusive). Default: the log's beginning.
+        #[arg(long)]
+        from: Option<i64>,
+        /// Last input offset (exclusive). Default: the processor's committed offset.
+        #[arg(long)]
+        to: Option<i64>,
+        /// Start at the first input at or after this time (RFC 3339).
+        #[arg(long, conflicts_with = "from")]
+        from_time: Option<chrono::DateTime<chrono::Utc>>,
+        /// End before the first input at or after this time (RFC 3339).
+        #[arg(long, conflicts_with = "to")]
+        to_time: Option<chrono::DateTime<chrono::Utc>>,
+        /// Also write the replayed events to this (scratch) topic.
+        #[arg(long)]
+        output_topic: Option<String>,
+        /// Warm up from the log's beginning instead of a live snapshot.
+        #[arg(long)]
+        no_snapshot: bool,
+        /// Deliberately change a clustering threshold (implies --no-snapshot),
+        /// to see the diff catch a non-identical run.
+        #[arg(long)]
+        perturb_neighbor_similarity: Option<f32>,
+    },
     /// Cluster a fixture and report story quality, throughput and the output hash.
     Eval {
         #[arg(long)]
@@ -184,6 +210,23 @@ fn main() -> Result<()> {
     pulse_core::telemetry::init("story-processor");
     match Cli::parse().command {
         Command::Run => tokio::runtime::Runtime::new()?.block_on(run_live()),
+        Command::Replay {
+            from,
+            to,
+            from_time,
+            to_time,
+            output_topic,
+            no_snapshot,
+            perturb_neighbor_similarity,
+        } => replay(
+            from,
+            to,
+            from_time,
+            to_time,
+            output_topic,
+            no_snapshot,
+            perturb_neighbor_similarity,
+        ),
         Command::Eval {
             fixture,
             tuning,
@@ -252,6 +295,102 @@ fn main() -> Result<()> {
     }
 }
 
+fn replay(
+    from: Option<i64>,
+    to: Option<i64>,
+    from_time: Option<chrono::DateTime<chrono::Utc>>,
+    to_time: Option<chrono::DateTime<chrono::Utc>>,
+    output_topic: Option<String>,
+    no_snapshot: bool,
+    perturb: Option<f32>,
+) -> Result<()> {
+    use pulse_core::config::{Settings, env_or};
+    use pulse_core::topics;
+    use story_processor::replay::{self, ReplayRequest};
+
+    let brokers = Settings::from_env().kafka_brokers;
+    let input_topic = env_or("PULSE_PROCESSOR_INPUT_TOPIC", topics::ARTICLES_EMBEDDED);
+    let group = env_or("PULSE_PROCESSOR_GROUP", "story-processor");
+    let at = |t: chrono::DateTime<chrono::Utc>| {
+        replay::offset_for_time(&brokers, &input_topic, t.timestamp_millis())
+    };
+    let from = match from_time {
+        Some(t) => at(t)?,
+        None => from.unwrap_or(0),
+    };
+    let to = match to_time {
+        Some(t) => Some(at(t)?),
+        None => to,
+    };
+    let request = ReplayRequest {
+        snapshot_dir: (!no_snapshot && perturb.is_none()).then(|| {
+            env_or(
+                "PULSE_PROCESSOR_SNAPSHOT_DIR",
+                &format!("data/checkpoints/{group}"),
+            )
+            .into()
+        }),
+        brokers: brokers.clone(),
+        events_topic: env_or("PULSE_PROCESSOR_OUTPUT_TOPIC", topics::STORIES_EVENTS),
+        late_topic: env_or("PULSE_PROCESSOR_LATE_TOPIC", topics::ARTICLES_LATE),
+        processor_group: group,
+        input_topic,
+        from,
+        to,
+        output_topic,
+    };
+    let report = replay::run(&request, |model_version| {
+        let mut cfg = story_processor::live::production_config(model_version)?;
+        if let Some(v) = perturb {
+            cfg.neighbor_similarity = v;
+        }
+        Ok(cfg)
+    })?;
+
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    eprintln!(
+        "\nreplayed inputs [{}, {}){} from {} ({} warm-up + {} in range) in {:.2}s",
+        report.from,
+        report.to,
+        if report.clamped {
+            " (clamped to processor's committed offset)"
+        } else {
+            ""
+        },
+        report
+            .snapshot_offset
+            .map_or("the log's beginning".into(), |o| format!("snapshot @{o}")),
+        report.warmup_inputs,
+        report.inputs,
+        report.seconds
+    );
+    eprintln!(
+        "events: {} original, {} replayed, {} matched → {}",
+        report.events.original,
+        report.events.replayed,
+        report.events.matched,
+        if report.events.identical {
+            "IDENTICAL"
+        } else {
+            "DIFFERENT"
+        }
+    );
+    eprintln!(
+        "late:   {} original, {} replayed → {}",
+        report.late.original,
+        report.late.replayed,
+        if report.late.identical {
+            "IDENTICAL"
+        } else {
+            "DIFFERENT"
+        }
+    );
+    if !report.identical {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
 async fn run_live() -> Result<()> {
     use pulse_core::config::{Settings, env_or};
     use pulse_core::topics;
@@ -289,24 +428,8 @@ async fn run_live() -> Result<()> {
         linger: Duration::from_millis(env_or("PULSE_PROCESSOR_LINGER_MS", "200").parse()?),
         group_id,
     };
-    let centering_override = std::env::var("PULSE_CENTERING").ok().map(PathBuf::from);
-    let config_for: story_processor::live::ConfigFor = Box::new(move |model_version: &str| {
-        let path = centering_override
-            .unwrap_or_else(|| story_processor::centering::default_path(model_version));
-        let centering = if path.exists() {
-            Some(Arc::new(Centering::load(&path)?))
-        } else {
-            tracing::warn!(
-                "no centering file at {}; clustering raw vectors",
-                path.display()
-            );
-            None
-        };
-        Ok(Config {
-            centering,
-            ..Config::default()
-        })
-    });
+    let config_for: story_processor::live::ConfigFor =
+        Box::new(story_processor::live::production_config);
 
     let shutdown = tokio_util::sync::CancellationToken::new();
     let on_signal = shutdown.clone();

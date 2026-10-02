@@ -7,9 +7,12 @@
 //! - `GET /api/stream`: live story events (SSE), resumable with `Last-Event-ID`.
 //!   Fed by the sink's Postgres NOTIFY, so every streamed event is already
 //!   queryable through the endpoints above.
+//! - `POST /api/replays`, `GET /api/replays[/{id}]`: re-drive a window of the
+//!   input log and diff it against the live output (one run at a time).
 //! - `GET /metrics`: Prometheus.
 
 mod live;
+mod replays;
 mod routes;
 
 use std::net::{Ipv4Addr, SocketAddr};
@@ -37,6 +40,7 @@ pub struct AppState {
     pub topics: Vec<String>,
     pub sources_path: PathBuf,
     pub live: live::Live,
+    pub replays: replays::Runner,
     pub metrics: PrometheusHandle,
     /// `/api/stats` pipeline section, cached briefly (it queries Kafka).
     pub pipeline_cache: tokio::sync::Mutex<Option<(Instant, serde_json::Value)>>,
@@ -61,6 +65,13 @@ async fn main() -> Result<()> {
     // Ensure the schema exists even if the API starts before the sink.
     let mut db = pulse_store::connect(&settings.database_url).await?;
     pulse_store::migrate(&mut db).await?;
+    let interrupted = pulse_store::replays::fail_interrupted(&db).await?;
+    if interrupted > 0 {
+        tracing::warn!(
+            interrupted,
+            "marked replays interrupted by the last shutdown as failed"
+        );
+    }
     drop(db);
 
     let pool = pulse_store::pool(&settings.database_url, 16)?;
@@ -74,7 +85,7 @@ async fn main() -> Result<()> {
     let state: Shared = Arc::new(AppState {
         pool,
         embedder,
-        brokers: settings.kafka_brokers,
+        brokers: settings.kafka_brokers.clone(),
         topics: vec![
             pulse_core::topics::ARTICLES_RAW.into(),
             pulse_core::topics::ARTICLES_EMBEDDED.into(),
@@ -83,6 +94,27 @@ async fn main() -> Result<()> {
         ],
         sources_path: env_or("PULSE_SOURCES", "config/sources.toml").into(),
         live,
+        replays: replays::Runner::new(
+            settings.kafka_brokers.clone(),
+            env_or(
+                "PULSE_PROCESSOR_INPUT_TOPIC",
+                pulse_core::topics::ARTICLES_EMBEDDED,
+            ),
+            env_or(
+                "PULSE_PROCESSOR_OUTPUT_TOPIC",
+                pulse_core::topics::STORIES_EVENTS,
+            ),
+            env_or(
+                "PULSE_PROCESSOR_LATE_TOPIC",
+                pulse_core::topics::ARTICLES_LATE,
+            ),
+            env_or("PULSE_PROCESSOR_GROUP", "story-processor"),
+            env_or(
+                "PULSE_PROCESSOR_SNAPSHOT_DIR",
+                "data/checkpoints/story-processor",
+            )
+            .into(),
+        ),
         metrics,
         pipeline_cache: tokio::sync::Mutex::new(None),
     });
@@ -97,6 +129,8 @@ async fn main() -> Result<()> {
         .route("/api/timeline", get(routes::timeline))
         .route("/api/sources", get(routes::sources))
         .route("/api/stream", get(live::stream))
+        .route("/api/replays", get(replays::list).post(replays::create))
+        .route("/api/replays/{id}", get(replays::get))
         .route("/metrics", get(routes::metrics))
         .layer(middleware::from_fn(track))
         .layer(CompressionLayer::new())

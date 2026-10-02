@@ -6,6 +6,7 @@
 //! - [`reader`]: queries for the API, including time travel to any log position.
 
 pub mod reader;
+pub mod replays;
 pub mod writer;
 
 pub use {deadpool_postgres, pgvector, tokio_postgres};
@@ -17,7 +18,10 @@ use tokio_postgres::{Client, NoTls};
 /// event `input_offset:seq`), so listeners only see durable, queryable events.
 pub const EVENTS_CHANNEL: &str = "pulse_events";
 
-const MIGRATIONS: &[(i32, &str)] = &[(1, include_str!("../migrations/001_read_model.sql"))];
+const MIGRATIONS: &[(i32, &str)] = &[
+    (1, include_str!("../migrations/001_read_model.sql")),
+    (2, include_str!("../migrations/002_replays.sql")),
+];
 
 /// Connects a single client, driving its connection in the background.
 pub async fn connect(url: &str) -> Result<Client> {
