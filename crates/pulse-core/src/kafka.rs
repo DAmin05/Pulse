@@ -27,7 +27,7 @@ pub fn scan_since(
     brokers: &str,
     topic: &str,
     since_ms: i64,
-    mut f: impl FnMut(&BorrowedMessage<'_>),
+    f: impl FnMut(&BorrowedMessage<'_>),
 ) -> Result<usize, ScanError> {
     const TIMEOUT: Duration = Duration::from_secs(10);
     let consumer: BaseConsumer = base(brokers, "pulse-scan")
@@ -60,11 +60,48 @@ pub fn scan_since(
         return Ok(0);
     }
     consumer.assign(&assignment)?;
+    drain(&consumer, topic, ends, f)
+}
 
-    // On transactional topics the last offsets can be commit markers, which are
-    // never delivered. So a partition is done when the consumer's *position*
-    // (which skips markers and aborted records) reaches the end, not when we see
-    // a message at end-1.
+/// Calls `f` for every committed message in `[from, to)` of one partition, in
+/// offset order. Used to re-process a range deterministically (recovery, replay).
+///
+/// Blocking: call from `spawn_blocking` in async code.
+pub fn scan_range(
+    brokers: &str,
+    topic: &str,
+    partition: i32,
+    from: i64,
+    to: i64,
+    f: impl FnMut(&BorrowedMessage<'_>),
+) -> Result<usize, ScanError> {
+    if from >= to {
+        return Ok(0);
+    }
+    let consumer: BaseConsumer = base(brokers, "pulse-scan")
+        .set("group.id", "pulse-scan")
+        .set("enable.auto.commit", "false")
+        .set("isolation.level", "read_committed")
+        .create()?;
+    let mut assignment = TopicPartitionList::new();
+    assignment.add_partition_offset(topic, partition, Offset::Offset(from))?;
+    consumer.assign(&assignment)?;
+    drain(&consumer, topic, HashMap::from([(partition, to)]), f)
+}
+
+/// Reads assigned partitions until each one's position reaches its end offset.
+///
+/// On transactional topics the last offsets can be commit markers, which are
+/// never delivered. So a partition is done when the consumer's *position*
+/// (which skips markers and aborted records) reaches the end, not when we see
+/// a message at end-1.
+fn drain(
+    consumer: &BaseConsumer,
+    topic: &str,
+    mut ends: HashMap<i32, i64>,
+    mut f: impl FnMut(&BorrowedMessage<'_>),
+) -> Result<usize, ScanError> {
+    const TIMEOUT: Duration = Duration::from_secs(10);
     let mut count = 0;
     let mut last_progress = std::time::Instant::now();
     while !ends.is_empty() {

@@ -17,7 +17,7 @@ RUN=chaos-$(date +%s)
 TOPIC=test.$RUN.embedded
 RELAY=./target/release/embed-relay
 PULSE=./target/release/pulse
-LOG=$(mktemp -t relay-chaos)
+LOG=$(mktemp "${TMPDIR:-/tmp}/relay-chaos.XXXXXX")
 
 rpk() { docker compose -f deploy/docker-compose.yml exec -T redpanda rpk "$@"; }
 
@@ -60,7 +60,7 @@ for i in $(seq 1 "$KILLS"); do
   kill -9 "$pid" 2>/dev/null || true
   wait "$pid" 2>/dev/null || true
   echo "  kill $i: committed $(committed)/$expected"
-  [[ "$(committed)" == "$expected" ]] && { echo "  input fully committed; stopping kills"; break; }
+  if [[ "$(committed)" == "$expected" ]]; then echo "  input fully committed; stopping kills"; break; fi
 done
 
 pid=$(start_relay)

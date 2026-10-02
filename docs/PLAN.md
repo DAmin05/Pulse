@@ -136,7 +136,7 @@ message StoryEvent {
 
 ### 5.2 Event time & watermarks
 - Event time = `published_at`; clamp missing/future timestamps to `fetched_at` (+ small skew), count corrections.
-- Watermark = max event time seen − allowed lateness (default 30 min). Derived from the log → deterministic.
+- Watermark = max event time seen − allowed lateness (**24h**, measured: 6h dropped 52% of the cold-start backlog). Derived from the log → deterministic.
 - Housekeeping runs on **event-time ticks** (every 10 min): split/merge detection, story closing (48h idle), index/LSH eviction.
 - Late within lateness → normal path. Beyond → `articles.late`, attached only if the story is still open. Both counted.
 
@@ -234,7 +234,7 @@ Time travel:
 | 1 | Ingestor | Source trait, RSS adapter, `sources.toml` (~100+ multilingual feeds), language detection, GDELT adapter, metrics | 24h unattended run; **record 24h of `articles.raw` as the golden fixture** |
 | 2 | Embedder | gRPC service, dynamic batching + length bucketing, ONNX model (fp32/int8), Rust embed relay with Kafka transactions, relay chaos test, benchmark | Benchmark chart; fixture embedded; relay passes kill -9 test |
 | 3 | Processor v1 | Dedup + clustering + story events (no fault tolerance yet); eval/sweep/recall tooling; centering; drift guards | ✅ Sensible stories on RSS and 49k GDELT fixtures (cross-lingual); HNSW recall ≥ 0.95 vs. oracle |
-| 4 | Correctness | Watermarks, late handling, epoch transactions, checkpoints, recovery | Determinism test + 50-kill chaos test pass in CI |
+| 4 | Correctness | Watermarks (24h lateness), late routing, event-time housekeeping + bounded state, epoch transactions, log-structured snapshots + silent replay | ✅ Restore-anywhere property test; chaos test byte-identical after 50 kill -9s (in CI) |
 | 5 | Split / merge | Ticks, split/merge with hysteresis, lineage | Hand-verified events on fixture; thresholds tuned |
 | 6 | Sink + API | Story Sink, Postgres schema, Axum endpoints, SSE | `curl /stream` shows live events; `as_of` works |
 | 7 | Replay | Replay mode, checkpoint index, diff service | "Replay last hour → 0 diffs" via API |

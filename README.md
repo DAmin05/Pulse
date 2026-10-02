@@ -15,7 +15,7 @@ crates/
   pulse-cli/         `pulse` developer CLI (doctor, fixture record/stats)
   ingestor/          RSS + GDELT polling → articles.raw
   embed-relay/       articles.raw → Embedder → articles.embedded (Kafka transactions)
-  story-processor/   dedup + clustering engine, eval tooling (live mode: phase 4)
+  story-processor/   clustering engine, watermarks, snapshots, exactly-once live mode
   story-sink/        stories.events → Postgres                     (phase 6)
   query-api/         Axum REST + SSE                               (phase 6)
 embedder/            Python gRPC embedding service (ONNX, dynamic batching)
@@ -165,6 +165,40 @@ What made clustering work:
 
 Output is deterministic: the same fixture gives the same event hash on every run
 and across debug/release builds.
+
+### Event time, exactly-once and recovery
+
+```bash
+make process                          # live: articles.embedded → stories.events (+ articles.late)
+make chaos-processor KILLS=10         # kill -9 repeatedly; output must match a clean run byte for byte
+pulse fixture synth --out x.pulseem   # deterministic synthetic stream (late, dupes, drifting topics)
+pulse fixture publish --file x.pulseem --topic <topic>
+pulse topic hash <topic>              # order-sensitive fingerprint of committed records
+```
+
+- **Watermark** = max event time − 24h allowed lateness, derived only from the log.
+  A **late** article (behind the watermark) can join an open story, flagged `late`,
+  but never creates one. Instead it goes to `articles.late`. On the cold-start RSS
+  fixture, 6h lateness dropped 52% of inputs as late, 24h drops 17% (only the stale
+  backlog), and 48h drops 5%.
+- **Housekeeping on event-time ticks** (every 10 min of watermark, never wall clock):
+  stories idle for 48h close (`StoryClosed`) and their articles leave memory. The
+  HNSW index tracks evicted entries as tombstones and is rebuilt once they pass 20%,
+  so state stays bounded without per-eviction rebuilds.
+- **Exactly once:** each epoch (≤500 inputs) commits its story events, its late
+  articles and the next input offset in one Kafka transaction.
+- **Log-structured checkpoints:** state (zstd + bincode, ~11 MB for 4k articles) is
+  snapshotted every 5,000 inputs or 5 minutes, *after* a commit. On restart, the
+  processor loads the newest snapshot at or before the committed offset and
+  **silently replays** the gap from Kafka; determinism makes the rebuilt state
+  identical. So the log is the write-ahead log, and snapshots can be rare while
+  commits stay frequent. A snapshot records a fingerprint of the config and
+  centering, and resuming it under different settings is refused.
+- **Proof:** a property test snapshots at random points, restores, and checks that
+  events *and final state bytes* equal an uninterrupted run. `scripts/chaos/processor.sh`
+  runs the real thing: a clean run vs a run SIGKILLed up to 50 times, with tiny
+  epochs and frequent snapshots. Both output topics must have identical hashes. CI
+  runs 50 kills on 20k synthetic articles.
 
 Known limitations, planned for later phases: same-template events in different
 countries ("government presents 2027 budget") can share a story until **split

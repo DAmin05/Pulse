@@ -8,7 +8,9 @@
 //! [`BruteForce`] is the exact oracle used to measure recall.
 
 use std::cmp::{Ordering, Reverse};
-use std::collections::{BinaryHeap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet};
+
+use serde::{Deserialize, Serialize};
 
 pub trait VectorIndex {
     /// Adds a vector under a caller-chosen key. Keys must be unique.
@@ -106,7 +108,7 @@ impl VectorIndex for BruteForce {
 
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HnswParams {
     /// Links per node on upper layers.
     pub m: usize,
@@ -131,12 +133,15 @@ impl Default for HnswParams {
 
 const MAX_LEVEL: usize = 16;
 
+#[derive(Serialize, Deserialize)]
 pub struct Hnsw {
     dim: usize,
     params: HnswParams,
     /// External key per node; nodes are dense `0..n` in insertion order.
     keys: Vec<u32>,
-    key_to_node: std::collections::HashMap<u32, u32>,
+    /// Derived from `keys`; rebuilt by [`Hnsw::reindex`] after deserializing.
+    #[serde(skip)]
+    key_to_node: HashMap<u32, u32>,
     vectors: Vec<f32>,
     /// links[node][layer] = neighbor nodes.
     links: Vec<Vec<Vec<u32>>>,
@@ -152,7 +157,7 @@ impl Hnsw {
             dim,
             params,
             keys: Vec::new(),
-            key_to_node: std::collections::HashMap::new(),
+            key_to_node: HashMap::new(),
             vectors: Vec::new(),
             links: Vec::new(),
             entry: None,
@@ -163,6 +168,16 @@ impl Hnsw {
 
     pub fn params(&self) -> &HnswParams {
         &self.params
+    }
+
+    /// Rebuilds derived lookups after deserialization.
+    pub fn reindex(&mut self) {
+        self.key_to_node = self
+            .keys
+            .iter()
+            .enumerate()
+            .map(|(node, &key)| (key, node as u32))
+            .collect();
     }
 
     /// A fresh index holding only the keys `keep` accepts, inserted in their

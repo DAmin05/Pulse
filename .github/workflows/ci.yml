@@ -54,5 +54,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: make up
       - run: make doctor
+      # Exactly-once + determinism under crashes, on synthetic data (real
+      # fixtures hold publishers' text and are not in the repo).
+      - run: cargo build --release -p story-processor -p pulse-cli
+      - run: ./target/release/pulse fixture synth --out data/fixtures/synth-20k.pulseem --count 20000 --seed 11
+      - run: scripts/chaos/processor.sh 50 data/fixtures/synth-20k.pulseem
       - if: failure()
         run: docker compose -f deploy/docker-compose.yml --env-file .env logs --tail=200

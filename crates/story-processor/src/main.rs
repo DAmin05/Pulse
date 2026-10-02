@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use story_processor::ann::{BruteForce, Hnsw, HnswParams, VectorIndex};
 use story_processor::centering::Centering;
-use story_processor::engine::{Config, Engine, Outcome};
+use story_processor::engine::{Config, Engine};
 
 #[derive(Parser)]
 #[command(name = "story-processor", about = "Pulse Story Processor")]
@@ -27,6 +27,9 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Live mode: articles.embedded → stories.events, exactly once (env-configured;
+    /// see .env.example).
+    Run,
     /// Cluster a fixture and report story quality, throughput and the output hash.
     Eval {
         #[arg(long)]
@@ -99,6 +102,12 @@ struct Tuning {
     /// Cohesion margin; a negative value disables the check.
     #[arg(long, allow_hyphen_values = true)]
     cohesion_margin: Option<f32>,
+    /// Disable the watermark (nothing late, no closing): pure clustering quality.
+    #[arg(long)]
+    no_lateness: bool,
+    /// Override the allowed lateness.
+    #[arg(long)]
+    lateness_hours: Option<f64>,
 }
 
 impl Tuning {
@@ -109,6 +118,11 @@ impl Tuning {
             centroid_similarity: self.centroid_similarity.unwrap_or(d.centroid_similarity),
             dup_jaccard: self.dup_jaccard.unwrap_or(d.dup_jaccard),
             min_votes_established: self.min_votes.unwrap_or(d.min_votes_established),
+            allowed_lateness_ms: match (self.no_lateness, self.lateness_hours) {
+                (true, _) => None,
+                (false, Some(h)) => Some((h * 3_600_000.0) as i64),
+                (false, None) => d.allowed_lateness_ms,
+            },
             cohesion_margin: match self.cohesion_margin {
                 Some(m) if m < 0.0 => None,
                 Some(m) => Some(m),
@@ -152,6 +166,7 @@ fn resolve_centering(
 fn main() -> Result<()> {
     pulse_core::telemetry::init("story-processor");
     match Cli::parse().command {
+        Command::Run => tokio::runtime::Runtime::new()?.block_on(run_live()),
         Command::Eval {
             fixture,
             tuning,
@@ -199,6 +214,73 @@ fn main() -> Result<()> {
     }
 }
 
+async fn run_live() -> Result<()> {
+    use pulse_core::config::{Settings, env_or};
+    use pulse_core::topics;
+    use std::time::Duration;
+
+    let port: u16 = env_or("PULSE_PROCESSOR_METRICS_PORT", "9103").parse()?;
+    metrics_exporter_prometheus::PrometheusBuilder::new()
+        .with_http_listener(std::net::SocketAddr::from(([0, 0, 0, 0], port)))
+        .set_buckets_for_metric(
+            metrics_exporter_prometheus::Matcher::Suffix("seconds".into()),
+            &[
+                0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+            ],
+        )?
+        .install()?;
+
+    let group_id = env_or("PULSE_PROCESSOR_GROUP", "story-processor");
+    let cfg = story_processor::live::LiveConfig {
+        brokers: Settings::from_env().kafka_brokers,
+        input_topic: env_or("PULSE_PROCESSOR_INPUT_TOPIC", topics::ARTICLES_EMBEDDED),
+        output_topic: env_or("PULSE_PROCESSOR_OUTPUT_TOPIC", topics::STORIES_EVENTS),
+        late_topic: env_or("PULSE_PROCESSOR_LATE_TOPIC", topics::ARTICLES_LATE),
+        snapshot_dir: env_or(
+            "PULSE_PROCESSOR_SNAPSHOT_DIR",
+            &format!("data/checkpoints/{group_id}"),
+        )
+        .into(),
+        snapshot_every_messages: env_or("PULSE_PROCESSOR_SNAPSHOT_EVERY_MESSAGES", "5000")
+            .parse()?,
+        snapshot_every: Duration::from_secs(
+            env_or("PULSE_PROCESSOR_SNAPSHOT_EVERY_SECS", "300").parse()?,
+        ),
+        keep_snapshots: env_or("PULSE_PROCESSOR_KEEP_SNAPSHOTS", "5").parse()?,
+        max_batch: env_or("PULSE_PROCESSOR_MAX_BATCH", "500").parse()?,
+        linger: Duration::from_millis(env_or("PULSE_PROCESSOR_LINGER_MS", "200").parse()?),
+        group_id,
+    };
+    let centering_override = std::env::var("PULSE_CENTERING").ok().map(PathBuf::from);
+    let config_for: story_processor::live::ConfigFor = Box::new(move |model_version: &str| {
+        let path = centering_override
+            .unwrap_or_else(|| story_processor::centering::default_path(model_version));
+        let centering = if path.exists() {
+            Some(Arc::new(Centering::load(&path)?))
+        } else {
+            tracing::warn!(
+                "no centering file at {}; clustering raw vectors",
+                path.display()
+            );
+            None
+        };
+        Ok(Config {
+            centering,
+            ..Config::default()
+        })
+    });
+
+    let shutdown = tokio_util::sync::CancellationToken::new();
+    let on_signal = shutdown.clone();
+    tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            tracing::info!("shutting down after the current epoch");
+            on_signal.cancel();
+        }
+    });
+    story_processor::live::run(cfg, config_for, shutdown).await
+}
+
 fn load(path: &Path) -> Result<Vec<EmbeddedArticle>> {
     fixture::read_all(path).with_context(|| format!("reading {}", path.display()))
 }
@@ -217,14 +299,12 @@ fn run(inputs: &[EmbeddedArticle], cfg: Config) -> (Engine, RunStats) {
     let mut events = 0;
     let started = Instant::now();
     for (offset, input) in inputs.iter().enumerate() {
-        let (outcome, out) = engine.process(input, offset as i64);
-        let label = match outcome {
-            Outcome::Invalid => "invalid",
-            Outcome::ExactDuplicate => "exact_duplicate",
-            Outcome::NearDuplicate => "near_duplicate",
-            Outcome::Joined => "joined",
-            Outcome::Created => "created",
-        };
+        let processed = engine.process(input, offset as i64);
+        let label = story_processor::live::outcome_label(processed.outcome);
+        if processed.late {
+            *outcomes.entry("(late)").or_default() += 1;
+        }
+        let out = processed.events;
         *outcomes.entry(label).or_default() += 1;
         for e in &out {
             hasher.update(e.encode_to_vec());
@@ -255,10 +335,10 @@ struct Summary {
 }
 
 fn summarize(engine: &Engine) -> Summary {
-    let stories = engine.stories.values();
-    let n_articles = engine.articles.len().max(1);
+    let stories = engine.stories().values();
+    let n_articles = engine.articles().len().max(1);
     Summary {
-        stories: engine.stories.len(),
+        stories: engine.stories().len(),
         singletons: stories.clone().filter(|s| s.members.len() == 1).count(),
         multi_source: stories.clone().filter(|s| s.sources.len() >= 2).count(),
         cross_lingual: stories.clone().filter(|s| s.langs.len() >= 2).count(),
@@ -323,7 +403,7 @@ fn eval(
     println!("events        {}  sha256 {}", stats.events, stats.hash);
 
     let mut ranked: Vec<_> = engine
-        .stories
+        .stories()
         .values()
         .filter(|s| s.sources.len() >= 2)
         .collect();
@@ -337,7 +417,7 @@ fn eval(
 
     let describe = |story: &story_processor::engine::Story, members: usize| {
         let mut text = String::new();
-        let headline = &engine.articles[story.headline as usize];
+        let headline = &engine.articles()[&story.headline];
         let _ = writeln!(
             text,
             "{} articles · {} sources · {}\n  ★ {}",
@@ -352,7 +432,7 @@ fn eval(
             .filter(|&&m| m != story.headline)
             .take(members)
         {
-            let a = &engine.articles[m as usize];
+            let a = &engine.articles()[&m];
             let mark = if a.duplicate_of.is_some() {
                 "≈"
             } else {
@@ -371,7 +451,7 @@ fn eval(
     if audit > 0 {
         // Precision check: the weakest joins are where false merges show up first.
         let mut weakest: Vec<(f32, u32, u32)> = Vec::new();
-        for (&story_key, story) in &engine.stories {
+        for (&story_key, story) in engine.stories() {
             if story.originals.len() < 2 {
                 continue;
             }
@@ -388,8 +468,8 @@ fn eval(
 {audit} weakest joins (similarity to story centroid):"
         );
         for (sim, m, headline) in weakest.iter().take(audit) {
-            let a = &engine.articles[*m as usize];
-            let h = &engine.articles[*headline as usize];
+            let a = &engine.articles()[m];
+            let h = &engine.articles()[headline];
             println!(
                 "\n  {sim:.3}  [{} {}] {}\n     story: {}",
                 a.lang, a.source_id, a.title, h.title

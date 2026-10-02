@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
+use prost::Message as _;
 use pulse_core::fixture::{self, FixtureRecord, FixtureWriter};
 use pulse_core::proto::v1::{Article, EmbeddedArticle};
 use pulse_core::{config::Settings, kafka, topics};
@@ -163,5 +164,145 @@ pub fn stats(path: &Path) -> Result<()> {
     println!("out of order   {out_of_order} ({:.1}%)", pct(out_of_order));
     println!("time corrected {corrected} ({:.1}%)", pct(corrected));
     println!("no summary     {no_summary} ({:.1}%)", pct(no_summary));
+    Ok(())
+}
+
+/// Publishes a fixture into a topic in file order (idempotent producer, keyed
+/// by article id). Lets any recorded or synthetic stream drive the pipeline.
+pub async fn publish(settings: &Settings, path: &Path, topic: &str) -> Result<()> {
+    use rdkafka::producer::{FutureProducer, FutureRecord, Producer};
+    use rdkafka::util::Timeout;
+
+    let magic = fixture::magic(path).with_context(|| format!("reading {}", path.display()))?;
+    let records: Vec<(String, Vec<u8>)> = if &magic == EmbeddedArticle::MAGIC {
+        fixture::read_all::<EmbeddedArticle>(path)?
+            .into_iter()
+            .map(|r| {
+                let id = r.article.as_ref().map(|a| a.id.clone()).unwrap_or_default();
+                (id, r.encode_to_vec())
+            })
+            .collect()
+    } else {
+        fixture::read_all::<Article>(path)?
+            .into_iter()
+            .map(|a| (a.id.clone(), a.encode_to_vec()))
+            .collect()
+    };
+
+    let producer: FutureProducer =
+        kafka::idempotent_producer(&settings.kafka_brokers, "pulse-fixture-publish").create()?;
+    for (key, payload) in &records {
+        // Idempotence keeps per-partition order even with retries.
+        let mut record = FutureRecord::to(topic).key(key).payload(payload);
+        loop {
+            match producer.send_result(record) {
+                Ok(delivery) => {
+                    drop(delivery);
+                    break;
+                }
+                Err((
+                    rdkafka::error::KafkaError::MessageProduction(
+                        rdkafka::types::RDKafkaErrorCode::QueueFull,
+                    ),
+                    r,
+                )) => {
+                    record = r;
+                    producer.poll(Duration::from_millis(50));
+                }
+                Err((e, _)) => return Err(e.into()),
+            }
+        }
+    }
+    producer.flush(Timeout::After(Duration::from_secs(60)))?;
+    println!(
+        "published {} records from {} to {topic}",
+        records.len(),
+        path.display()
+    );
+    Ok(())
+}
+
+/// A deterministic synthetic embedded stream for tests and CI (real fixtures
+/// contain publishers' text and stay out of the repo). Covers drifting topics,
+/// exact and near duplicates, several sources and languages, and late arrivals
+/// beyond the processor's allowed lateness.
+pub fn synth(out: &Path, count: usize, seed: u64) -> Result<()> {
+    const DIM: usize = 64;
+    const TOPICS: usize = 48;
+    const WORDS: &[&str] = &[
+        "minister", "storm", "election", "market", "court", "strike", "summit", "flood", "budget",
+        "vote", "protest", "rescue", "trade", "border", "energy", "health", "school", "bank",
+        "rocket", "festival", "verdict", "airport", "talks", "fire", "harbor", "museum", "tariff",
+        "launch", "outage", "treaty", "drought", "merger",
+    ];
+    let hour = 3_600_000i64;
+    let start = 1_767_225_600_000i64; // 2026-01-01T00:00Z
+    let mut s = seed | 1;
+    let mut rand = move || {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        s
+    };
+
+    let mut writer = FixtureWriter::<EmbeddedArticle>::create(out)?;
+    let mut last_title = String::new();
+    for i in 0..count {
+        // ~6 min per article; 1 in 10 is 1–60h late.
+        let late_by = if rand() % 10 == 0 {
+            (1 + rand() % 60) as i64 * hour
+        } else {
+            0
+        };
+        // Topics drift every ~100 articles; late arrivals pick any topic.
+        let topic = if late_by > 0 {
+            (rand() % TOPICS as u64) as usize
+        } else {
+            (i / 100 + (rand() % 3) as usize) % TOPICS
+        };
+        let mut v: Vec<f32> = (0..DIM)
+            .map(|d| {
+                let noise = (rand() % 1000) as f32 / 4000.0;
+                if d == topic { 1.0 + noise } else { noise }
+            })
+            .collect();
+        let norm = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+        v.iter_mut().for_each(|x| *x /= norm);
+
+        let roll = rand() % 20;
+        let (id, title) = if i > 0 && roll == 0 {
+            (format!("syn{}", i - 1), last_title.clone()) // exact duplicate (re-poll)
+        } else if i > 0 && roll == 1 {
+            (format!("syn{i}"), format!("{last_title} (updated)")) // near duplicate
+        } else {
+            let words: Vec<&str> = (0..8)
+                .map(|_| WORDS[(rand() % WORDS.len() as u64) as usize])
+                .collect();
+            (
+                format!("syn{i}"),
+                format!("{} topic{topic}", words.join(" ")),
+            )
+        };
+        last_title.clone_from(&title);
+        writer.write(&EmbeddedArticle {
+            article: Some(Article {
+                id,
+                source_id: format!("synth-{}", rand() % 12),
+                url: format!("https://synthetic.example/{i}"),
+                title,
+                lang: ["en", "es", "fr", "de"][(rand() % 4) as usize].into(),
+                published_at_ms: start + i as i64 * hour / 10 - late_by,
+                fetched_at_ms: start + i as i64 * hour / 10,
+                ..Default::default()
+            }),
+            vector: v,
+            model_version: "synthetic".into(),
+        })?;
+    }
+    let written = writer.finish()?;
+    println!(
+        "wrote {written} synthetic embedded articles to {}",
+        out.display()
+    );
     Ok(())
 }

@@ -14,11 +14,13 @@ path = "src/main.rs"
 anyhow.workspace = true
 chrono = { version = "0.4.45", default-features = false, features = ["std", "clock"] }
 clap.workspace = true
+hex.workspace = true
 humantime = "2.4.0"
 prost.workspace = true
 pulse-core.workspace = true
 rdkafka.workspace = true
 reqwest.workspace = true
+sha2.workspace = true
 tokio.workspace = true
 tokio-postgres.workspace = true
 

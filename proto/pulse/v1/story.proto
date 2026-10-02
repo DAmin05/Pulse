@@ -45,6 +45,9 @@ message ArticleAdded {
   bool is_duplicate = 4;
   // Set when is_duplicate is true.
   string duplicate_of = 5;
+  // The article's event time was behind the watermark: it arrived after the
+  // allowed lateness. Late articles may join open stories but never create one.
+  bool late = 6;
 }
 
 message StoryUpdated {

@@ -11,6 +11,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use serde::{Deserialize, Serialize};
 use xxhash_rust::xxh3::xxh3_64_with_seed;
 
 pub const NUM_HASHES: usize = 128;
@@ -117,11 +118,43 @@ fn band_key(sig: &Signature, band: usize) -> u64 {
 }
 
 /// LSH index over signatures, keyed by caller-chosen ids (`u32`).
-#[derive(Default)]
+/// Serializes as its signatures only; buckets are derived.
+#[derive(Default, Clone, Serialize, Deserialize)]
+#[serde(from = "LshSnapshot", into = "LshSnapshot")]
 pub struct LshIndex {
     /// (band, key) → ids in insertion order.
     buckets: BTreeMap<(u8, u64), Vec<u32>>,
     signatures: BTreeMap<u32, Signature>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct LshSnapshot {
+    // serde has no impl for [u64; 128]; store each signature as a Vec.
+    signatures: Vec<(u32, Vec<u64>)>,
+}
+
+impl From<LshIndex> for LshSnapshot {
+    fn from(index: LshIndex) -> Self {
+        Self {
+            signatures: index
+                .signatures
+                .into_iter()
+                .map(|(id, sig)| (id, sig.to_vec()))
+                .collect(),
+        }
+    }
+}
+
+impl From<LshSnapshot> for LshIndex {
+    fn from(snapshot: LshSnapshot) -> Self {
+        let mut index = Self::default();
+        // Ascending ids = original insertion order, so buckets come out identical.
+        for (id, sig) in snapshot.signatures {
+            let sig: Signature = sig.try_into().expect("signature has NUM_HASHES values");
+            index.insert(id, sig);
+        }
+        index
+    }
 }
 
 impl LshIndex {

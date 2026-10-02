@@ -71,6 +71,12 @@ chaos-relay: ## kill -9 the relay repeatedly; verify exactly-once output
 
 # --- Story Processor ---------------------------------------------------------
 
+process: ## Run the Story Processor live (articles.embedded → stories.events)
+	cargo run -p story-processor --release -- run
+
+chaos-processor: ## kill -9 the processor repeatedly; output must be byte-identical to a clean run
+	scripts/chaos/processor.sh $(or $(KILLS),10) $(or $(FIXTURE),data/fixtures/synth.pulseem)
+
 EMBEDDED ?= data/fixtures/smoke.pulseem
 cluster-eval: ## Cluster an embedded fixture and print story quality (EMBEDDED=...)
 	cargo run -q -p story-processor --release -- eval --fixture $(EMBEDDED) --top 10 --audit 10
