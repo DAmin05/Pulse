@@ -51,9 +51,10 @@ jobs:
         working-directory: web
     steps:
       - uses: actions/checkout@v4
+      # pnpm version comes from "packageManager" in web/package.json.
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          package_json_file: web/package.json
       - uses: actions/setup-node@v4
         with:
           node-version: 22

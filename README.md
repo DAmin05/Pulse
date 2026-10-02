@@ -50,7 +50,7 @@ re-run any past hour and check that it produces exactly the same result.
 | **Docker** (with Compose) | runs the databases and message system | [Docker Desktop](https://www.docker.com/products/docker-desktop/) |
 | **Rust** | builds most of Pulse | [rustup.rs](https://rustup.rs) (the right version is picked automatically) |
 | **Python 3.12 or newer** | runs the AI model that reads articles | [python.org](https://www.python.org/downloads/) |
-| **Node.js 22 and pnpm** | builds the website | [nodejs.org](https://nodejs.org), then run `corepack enable` |
+| **Node.js 22 and pnpm** | builds the website | [nodejs.org](https://nodejs.org), then run `npm install -g pnpm` |
 | **make** | runs the commands below | already on macOS and Linux |
 
 You'll also need about 2 GB of free disk space. No accounts or API keys are
@@ -142,6 +142,7 @@ allowance it uses each day, and playing the same summary again is free.
 |---|---|
 | `Cannot connect to the Docker daemon` | Start Docker Desktop and try again. |
 | `port is already allocated` or `address already in use` | Another program is using one of Pulse's ports (see [services and ports](#services-and-ports)). Close it, or stop an older Pulse with `make down`. |
+| `pnpm: No such file or directory` | Run `npm install -g pnpm`. If you use nvm, do this once for each Node version you switch to. |
 | `make model` fails | Usually a network hiccup; run it again. It checks the download, so a broken file is never used. |
 | The website says it can't load stories | Make sure `make pipeline` is running. `make doctor` checks every service and says what's wrong. |
 | The map is empty | Give it a few minutes on the first run: stories appear once two outlets have covered the same event. |

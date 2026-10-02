@@ -113,16 +113,19 @@ ann-recall: ## HNSW recall@10 vs brute force on an embedded fixture
 
 # --- Frontend ----------------------------------------------------------------
 
-web-install: ## Install frontend dependencies (pnpm)
+need-pnpm:
+	@command -v pnpm >/dev/null || { echo "pnpm isn't installed for the Node.js you're using ($$(node --version 2>/dev/null || echo 'no node found')). Install it with: npm install -g pnpm"; exit 1; }
+
+web-install: need-pnpm ## Install frontend dependencies (pnpm)
 	pnpm --dir web install --frozen-lockfile
 
-web: ## Run the frontend dev server on :5173 (proxies /api to $$PULSE_API or :9105)
+web: need-pnpm ## Run the frontend dev server on :5173 (proxies /api to $$PULSE_API or :9105)
 	pnpm --dir web dev
 
-web-build: ## Type-check and build the frontend into web/dist
+web-build: need-pnpm ## Type-check and build the frontend into web/dist
 	pnpm --dir web build
 
-web-check: ## Lint, type-check and test the frontend
+web-check: need-pnpm ## Lint, type-check and test the frontend
 	pnpm --dir web lint
 	pnpm --dir web test
 
@@ -166,4 +169,4 @@ py-test: py-proto ## Lint and test the embedder
 check: lint test proto-lint py-test web-check ## Run every check CI runs
 
 
-.PHONY: help env up down nuke ps logs topics doctor ingest sources-check fixture-record build test fmt lint proto-lint py-setup py-proto py-test check model embedder relay bench chaos-relay web-install web web-build web-check
+.PHONY: help env up down nuke ps logs topics doctor ingest sources-check fixture-record build test fmt lint proto-lint py-setup py-proto py-test check model embedder relay bench chaos-relay need-pnpm web-install web web-build web-check
