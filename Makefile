@@ -111,6 +111,21 @@ cluster-sweep: ## Sweep similarity thresholds on an embedded fixture
 ann-recall: ## HNSW recall@10 vs brute force on an embedded fixture
 	cargo run -q -p story-processor --release -- recall --fixture $(EMBEDDED)
 
+# --- Frontend ----------------------------------------------------------------
+
+web-install: ## Install frontend dependencies (pnpm)
+	pnpm --dir web install --frozen-lockfile
+
+web: ## Run the frontend dev server on :5173 (proxies /api to $$PULSE_API or :9105)
+	pnpm --dir web dev
+
+web-build: ## Type-check and build the frontend into web/dist
+	pnpm --dir web build
+
+web-check: ## Lint, type-check and test the frontend
+	pnpm --dir web lint
+	pnpm --dir web test
+
 # --- Rust --------------------------------------------------------------------
 
 build: ## Build all Rust crates
@@ -148,7 +163,7 @@ py-test: py-proto ## Lint and test the embedder
 
 # --- Everything --------------------------------------------------------------
 
-check: lint test proto-lint py-test ## Run every check CI runs
+check: lint test proto-lint py-test web-check ## Run every check CI runs
 
 
-.PHONY: help env up down nuke ps logs topics doctor ingest sources-check fixture-record build test fmt lint proto-lint py-setup py-proto py-test check model embedder relay bench chaos-relay
+.PHONY: help env up down nuke ps logs topics doctor ingest sources-check fixture-record build test fmt lint proto-lint py-setup py-proto py-test check model embedder relay bench chaos-relay web-install web web-build web-check

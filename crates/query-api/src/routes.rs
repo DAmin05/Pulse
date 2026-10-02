@@ -62,8 +62,25 @@ pub async fn db(state: &Shared) -> Result<pulse_store::deadpool_postgres::Object
 
 #[derive(Deserialize, Default)]
 pub struct At {
+    #[serde(default, deserialize_with = "opt_i64")]
     at: Option<i64>,
     as_of: Option<DateTime<Utc>>,
+}
+
+/// Query strings are untyped, and `#[serde(flatten)]` hands numbers over as
+/// strings, so accept either form.
+fn opt_i64<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<i64>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Raw {
+        Int(i64),
+        Str(String),
+    }
+    match Option::<Raw>::deserialize(d)? {
+        None => Ok(None),
+        Some(Raw::Int(n)) => Ok(Some(n)),
+        Some(Raw::Str(s)) => s.trim().parse().map(Some).map_err(serde::de::Error::custom),
+    }
 }
 
 #[derive(Serialize, Clone, Copy)]
@@ -488,4 +505,29 @@ pub async fn sources(State(state): State<Shared>) -> ApiResult<Value> {
         })
         .collect();
     Ok(Json(json!({ "sources": sources })))
+}
+
+#[cfg(test)]
+mod tests {
+    use axum::extract::Query;
+    use axum::http::Uri;
+
+    use super::*;
+
+    #[test]
+    fn flattened_position_parses_from_query_string() {
+        let uri: Uri = "/api/stories?at=5036&limit=40&min_sources=2"
+            .parse()
+            .unwrap();
+        let Query(p) = Query::<StoriesParams>::try_from_uri(&uri).unwrap();
+        assert_eq!(p.at.at, Some(5036));
+        assert_eq!(p.limit, Some(40));
+
+        let uri: Uri = "/api/graph?as_of=2026-10-01T12:00:00Z".parse().unwrap();
+        let Query(p) = Query::<StoriesParams>::try_from_uri(&uri).unwrap();
+        assert!(p.at.at.is_none() && p.at.as_of.is_some());
+
+        let uri: Uri = "/api/stories?at=abc".parse().unwrap();
+        assert!(Query::<StoriesParams>::try_from_uri(&uri).is_err());
+    }
 }

@@ -244,7 +244,11 @@ async fn time_travel_through_merge_and_split_is_idempotent() {
     // Lineage and closed-story views.
     let c1 = reader::story(&c.client, "c1", 4).await.unwrap().unwrap();
     assert_eq!(
-        c1.parents.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+        c1.lineage
+            .parents
+            .iter()
+            .map(|p| p.id.as_str())
+            .collect::<Vec<_>>(),
         ["s1"]
     );
     let s1 = reader::story(&c.client, "s1", 4).await.unwrap().unwrap();
@@ -255,17 +259,18 @@ async fn time_travel_through_merge_and_split_is_idempotent() {
         "a closed story shows its members as of closing"
     );
     assert_eq!(
-        s1.merged_from
+        s1.lineage
+            .merged_from
             .iter()
             .map(|p| p.id.as_str())
             .collect::<Vec<_>>(),
         ["s2"]
     );
-    let mut kids: Vec<_> = s1.children.iter().map(|p| p.id.as_str()).collect();
+    let mut kids: Vec<_> = s1.lineage.children.iter().map(|p| p.id.as_str()).collect();
     kids.sort_unstable();
     assert_eq!(kids, ["c1", "c2"]);
     let s2 = reader::story(&c.client, "s2", 4).await.unwrap().unwrap();
-    assert_eq!(s2.merged_into.map(|r| r.id).as_deref(), Some("s1"));
+    assert_eq!(s2.lineage.merged_into.map(|r| r.id).as_deref(), Some("s1"));
 
     // Applying everything again changes nothing.
     let before = snapshot(&c.client).await;
@@ -308,4 +313,17 @@ async fn time_maps_to_position() {
         (t.articles, t.stories_open, t.merges, t.splits),
         (4, 2, 1, 1)
     );
+
+    // The timeline is dense: every bucket present, offsets carried forward.
+    let tl = reader::timeline(&c.client, 8).await.unwrap();
+    assert_eq!(tl.len(), 8);
+    assert!(
+        tl.windows(2)
+            .all(|w| w[0].offset <= w[1].offset && w[0].start < w[1].start)
+    );
+    assert!(
+        tl.iter().any(|b| b.articles == 0),
+        "gaps show as empty buckets"
+    );
+    assert_eq!(tl.iter().map(|b| b.articles).sum::<i64>(), t.articles);
 }

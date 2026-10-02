@@ -20,6 +20,7 @@ crates/
   story-sink/        articles.embedded + stories.events → Postgres (offsets in the same txn)
   query-api/         Axum REST + SSE (live, resumable) over the read model
 embedder/            Python gRPC embedding service (ONNX, dynamic batching)
+web/                 React + TypeScript frontend (Vite): story graph, time travel, metrics
 proto/               protobuf schemas (buf-managed)
 config/              sources.toml (feed catalog), centering/ (frozen per-language means)
 deploy/              docker-compose stack and its config
@@ -41,6 +42,7 @@ docs/                design and plan
 make up        # start the stack, create topics and buckets
 make model     # download the embedding model (once)
 make pipeline  # run everything: ingest → embed → cluster → Postgres → API (Ctrl-C stops all)
+make web       # the frontend at http://localhost:5173 (after `make web-install`)
 make doctor    # verify the stack from the host
 make check     # fmt, clippy, tests, buf lint, embedder tests
 ```
@@ -266,8 +268,9 @@ latest position, so live views and time travel share one code path.
 | `GET /api/stories/{id}` | Articles (with duplicate/late flags), parents, children, merged from/into, event history |
 | `GET /api/graph?limit=&min_sources=&min_similarity=` | Nodes + similarity edges (centroid cosine) + split edges + recent splits/merges |
 | `GET /api/search?q=` | Cross-lingual semantic search (e5 query → pgvector), grouped by story; `strong` flags real matches |
-| `GET /api/timeline?buckets=` | Articles / new stories / splits / merges / closes per time bucket, with the offset to jump to |
+| `GET /api/timeline?buckets=` | Articles / new stories / splits / merges / closes per time bucket (every bucket, empty ones included), with the offset to jump to |
 | `GET /api/stats` | Totals, Kafka end offsets, sink position and lag per topic |
+| `GET /api/pipeline` | Pipeline panel: rates, latencies and watermark lag from Prometheus (latest + 30 min series), consumer lag per stage (cached 5 s) |
 | `GET /api/sources` | Feed catalog with article counts and last fetch |
 | `POST /api/replays` · `GET /api/replays[/{id}]` | Re-drive a window of the input log and diff it against the live output (see Replay) |
 | `GET /api/stream` | **SSE** of committed story events (`event: story`, `id: <offset>:<seq>`); resume with `Last-Event-ID` or `?after=` |
@@ -282,6 +285,41 @@ then continues live.
 Verified live: with `make pipeline`, 846 fresh articles flowed from RSS to the SSE
 stream in 4 minutes (622 new stories, 220 joins, 2 live merges), with zero warnings
 from any service and sink lag 0.
+
+## Frontend
+
+```bash
+make web-install
+make web                          # http://localhost:5173, proxies /api to :9105
+PULSE_API=http://localhost:9115 make web   # point it at another API
+make web-check                    # eslint + tsc + vitest
+```
+
+React 19 + TypeScript, Vite, TanStack Query for reads and one `EventSource` for the
+live stream. Everything on screen is a view of a log position: "live" follows the
+latest one, and any other position is time travel through the same endpoints.
+
+- **Story graph.** A d3-force simulation drawn on canvas. Area tracks article
+  count, color tracks recency, and important stories sit near the center. Live
+  events animate in place: new stories are born (or burst out of a split parent),
+  articles pulse their story, and merges fly the absorbed story into its target
+  along a dashed lineage line. Hover for a summary; click to focus a story and its
+  neighbours.
+- **Feed and drawer.** Stories ranked by distinct sources, with a live activity
+  ticker. The drawer shows coverage over 24h, languages, lineage links, every
+  article (syndicated copies and late arrivals flagged) and the story's event history.
+- **Search (⌘K).** Semantic and cross-lingual: a Spanish query finds English coverage.
+- **Timeline.** Input per interval over the whole history, with merges and splits
+  marked. Drag or use the arrow keys to time travel, press play to watch history
+  unfold, or "Re-run this hour" to replay that window through the processor and see
+  the byte-for-byte verdict with both hashes. Stretches when the pipeline was off
+  are shown as such, not as quiet news.
+- **Pipeline panel.** Each stage with its consumer lag, plus throughput, latency
+  and watermark lag sparklines from Prometheus.
+
+Light and dark themes (palette checked for color-blind safety and contrast),
+keyboard access throughout, `prefers-reduced-motion` respected, and layouts down to
+phone width.
 
 ## Replay: proving determinism on live data
 
@@ -328,6 +366,7 @@ of both the clean and the crash-tested processor output inside the chaos test.
 | S3 (SeaweedFS) | http://localhost:8333 | buckets `pulse-checkpoints`, `pulse-audio` |
 | SeaweedFS master | http://localhost:9333 | |
 | Query API | http://localhost:9105/api | REST + SSE; `/metrics` too |
+| Frontend (dev) | http://localhost:5173 | `make web` |
 | Prometheus | http://localhost:9090 | scrapes host services on ports 9101–9106 |
 | Grafana | http://localhost:3000 | `admin` / `pulse` |
 

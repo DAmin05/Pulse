@@ -2033,6 +2033,7 @@ dependencies = [
  "pulse-core",
  "pulse-store",
  "rdkafka",
+ "reqwest",
  "serde",
  "serde_json",
  "story-processor",

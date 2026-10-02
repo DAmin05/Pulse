@@ -238,7 +238,7 @@ Time travel:
 | 5 | Split / merge | Log-position lineage checks on dirty stories, 2-means splits, centroid + anchor-word merges, hysteresis + cooldown, lineage in events | ✅ RSS: 4/4 merges correct, 0 false splits; GDELT reviewed (template limitation documented); restore-exact with lineage; chaos PASS |
 | 6 | Sink + API | Exactly-once sink (offsets in the DB txn), offset-versioned memberships, Axum REST, NOTIFY-fed resumable SSE, search, graph, timeline, stats, `make pipeline` | ✅ Live RSS → SSE end to end; resume exact; time travel through merge/split tested; idempotent re-apply tested |
 | 7 | Replay | Snapshot-or-scratch warm-up, byte-for-byte ordered diff of events + late articles, isolated output topic, API Replay Service (queued, persisted), perturbation control | ✅ Whole live history identical (4,912 events); windows identical; perturbed run caught; replays in CI |
-| 8 | Frontend | Story graph, time-travel slider, metrics panel, story drawer | Demo items 1–5 work in the browser |
+| 8 | Frontend | Canvas force graph (births, pulses, merge/split flashes), feed + live ticker, story drawer, ⌘K cross-lingual search, time-travel timeline with idle gaps, pipeline metrics panel (`/api/pipeline`), "Re-run this hour" replay verdicts; light/dark, responsive, reduced motion | ✅ Demo items 1–5 verified in the browser on live data (desktop, 900px, phone); replay of the last hour identical (3,047 / 3,047 events) |
 | 9 | Listen | Translation + ElevenLabs briefing endpoint, cache, budget, Web Speech fallback, player UI | Play a story in ≥3 languages; cached replays cost no credits |
 | 10 | Polish | README, architecture diagram, benchmark and exactly-once write-ups, demo video | A stranger can clone and run the demo |
 

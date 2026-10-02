@@ -17,6 +17,7 @@ metrics-exporter-prometheus = { version = "0.18", default-features = false }
 pulse-core.workspace = true
 pulse-store = { version = "0.1.0", path = "../pulse-store" }
 rdkafka.workspace = true
+reqwest = { workspace = true, features = ["json"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = "1.0.151"
 story-processor = { version = "0.1.0", path = "../story-processor" }

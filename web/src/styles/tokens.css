@@ -1,0 +1,165 @@
+/* Pulse design tokens.
+ *
+ * Surfaces, ink and data colors come from the validated dataviz palette
+ * (categorical slots, sequential blue ramp, status set). Dark mode is its own
+ * set of steps, not an inversion. The OS preference applies unless the viewer
+ * picks a theme (data-theme on <html>), which wins both ways.
+ *
+ * Components use roles (--ink-2, --ev-lineage…), never raw hex.
+ */
+
+:root {
+  color-scheme: light;
+
+  /* Surfaces */
+  --bg: #f9f9f7;
+  --surface-1: #fcfcfb;
+  --surface-2: #f3f2ee;
+  --surface-3: #e9e8e2;
+  --graph-bg: #f6f5f1;
+  --border: rgba(11, 11, 11, 0.1);
+  --border-strong: rgba(11, 11, 11, 0.18);
+  --grid: #e1e0d9;
+  --scrim: rgba(13, 13, 13, 0.28);
+
+  /* Ink (text). --ink-3 is for icons/axes only: below 4.5:1 for small text. */
+  --ink-1: #0b0b0b;
+  --ink-2: #52514e;
+  --ink-3: #898781;
+  --ink-inverse: #ffffff;
+
+  /* Brand: the live pulse. Mark color + an AA text variant. */
+  --accent: #eb6834;
+  --accent-text: #b7461a;
+  --accent-wash: rgba(235, 104, 52, 0.12);
+
+  /* Event semantics (validated categorical slots; always paired with icon + label) */
+  --ev-birth: #1baf7a; /* slot 3 aqua: a story is born */
+  --ev-article: #eb6834; /* slot 2 orange: an article joins */
+  --ev-lineage: #4a3aa7; /* slot 7 violet: split / merge */
+  --ev-lineage-wash: rgba(74, 58, 167, 0.1);
+
+  /* Recency ramp (sequential blue): active → cooling. Light mode: dark = active. */
+  --seq-hot: #1c5cab;
+  --seq-warm: #3987e5;
+  --seq-cool: #86b6ef;
+  --seq-cold: #b7d3f6;
+  --spark: #2a78d6;
+
+  /* Status (fixed set; shipped with icon + label) */
+  --good: #0ca30c;
+  --good-text: #006300;
+  --warning: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+
+  /* Type */
+  --font-ui: "Inter Variable", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-head: "Newsreader Variable", "Iowan Old Style", Georgia, serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, monospace;
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-md: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 26px;
+
+  /* Space & shape */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-8: 32px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --shadow-pop: 0 1px 2px rgba(11, 11, 11, 0.06), 0 12px 32px rgba(11, 11, 11, 0.12);
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 150ms;
+  --dur-med: 250ms;
+  --dur-slow: 400ms;
+
+  /* Layout */
+  --topbar-h: 56px;
+  --rail-w: 380px;
+  --drawer-w: 440px;
+  --timeline-h: 132px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --bg: #0d0d0d;
+    --surface-1: #161615;
+    --surface-2: #1f1f1e;
+    --surface-3: #2a2a28;
+    --graph-bg: #0d0d0d;
+    --border: rgba(255, 255, 255, 0.09);
+    --border-strong: rgba(255, 255, 255, 0.16);
+    --grid: #2c2c2a;
+    --scrim: rgba(0, 0, 0, 0.5);
+    --ink-1: #ffffff;
+    --ink-2: #c3c2b7;
+    --ink-3: #898781;
+    --ink-inverse: #0b0b0b;
+    --accent: #f07a4a;
+    --accent-text: #f4946c;
+    --accent-wash: rgba(240, 122, 74, 0.14);
+    --ev-birth: #199e70;
+    --ev-article: #d95926;
+    --ev-lineage: #9085e9;
+    --ev-lineage-wash: rgba(144, 133, 233, 0.14);
+    --seq-hot: #86b6ef;
+    --seq-warm: #3987e5;
+    --seq-cool: #1c5cab;
+    --seq-cold: #184f95;
+    --spark: #5598e7;
+    --good-text: #0ca30c;
+    --shadow-pop: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 16px 40px rgba(0, 0, 0, 0.55);
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0d0d0d;
+  --surface-1: #161615;
+  --surface-2: #1f1f1e;
+  --surface-3: #2a2a28;
+  --graph-bg: #0d0d0d;
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --grid: #2c2c2a;
+  --scrim: rgba(0, 0, 0, 0.5);
+  --ink-1: #ffffff;
+  --ink-2: #c3c2b7;
+  --ink-3: #898781;
+  --ink-inverse: #0b0b0b;
+  --accent: #f07a4a;
+  --accent-text: #f4946c;
+  --accent-wash: rgba(240, 122, 74, 0.14);
+  --ev-birth: #199e70;
+  --ev-article: #d95926;
+  --ev-lineage: #9085e9;
+  --ev-lineage-wash: rgba(144, 133, 233, 0.14);
+  --seq-hot: #86b6ef;
+  --seq-warm: #3987e5;
+  --seq-cool: #1c5cab;
+  --seq-cold: #184f95;
+  --spark: #5598e7;
+  --good-text: #0ca30c;
+  --shadow-pop: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-med: 0ms;
+    --dur-slow: 0ms;
+  }
+}

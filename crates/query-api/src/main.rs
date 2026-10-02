@@ -4,6 +4,7 @@
 //!   past position (`?at=<offset>` or `?as_of=<RFC 3339 time>`).
 //! - `GET /api/search?q=`: cross-lingual semantic search (Embedder + pgvector).
 //! - `GET /api/timeline`, `/api/stats`, `/api/sources`: slider, panels, filters.
+//! - `GET /api/pipeline`: per-stage throughput/latency (Prometheus) and lag (Kafka).
 //! - `GET /api/stream`: live story events (SSE), resumable with `Last-Event-ID`.
 //!   Fed by the sink's Postgres NOTIFY, so every streamed event is already
 //!   queryable through the endpoints above.
@@ -12,6 +13,7 @@
 //! - `GET /metrics`: Prometheus.
 
 mod live;
+mod pipeline;
 mod replays;
 mod routes;
 
@@ -44,6 +46,9 @@ pub struct AppState {
     pub metrics: PrometheusHandle,
     /// `/api/stats` pipeline section, cached briefly (it queries Kafka).
     pub pipeline_cache: tokio::sync::Mutex<Option<(Instant, serde_json::Value)>>,
+    /// `/api/pipeline` response, cached briefly (Prometheus + Kafka).
+    pub pipeline_panel_cache: tokio::sync::Mutex<Option<(Instant, serde_json::Value)>>,
+    pub prometheus_url: String,
 }
 
 pub type Shared = Arc<AppState>;
@@ -117,6 +122,8 @@ async fn main() -> Result<()> {
         ),
         metrics,
         pipeline_cache: tokio::sync::Mutex::new(None),
+        pipeline_panel_cache: tokio::sync::Mutex::new(None),
+        prometheus_url: settings.prometheus_url.clone(),
     });
 
     let app = Router::new()
@@ -128,6 +135,7 @@ async fn main() -> Result<()> {
         .route("/api/search", get(routes::search))
         .route("/api/timeline", get(routes::timeline))
         .route("/api/sources", get(routes::sources))
+        .route("/api/pipeline", get(pipeline::pipeline))
         .route("/api/stream", get(live::stream))
         .route("/api/replays", get(replays::list).post(replays::create))
         .route("/api/replays/{id}", get(replays::get))

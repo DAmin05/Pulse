@@ -81,15 +81,21 @@ pub struct StoryRef {
     pub headline: String,
 }
 
+/// A story's relatives, with headlines (the card holds only their ids).
+#[derive(Debug, Clone, Serialize)]
+pub struct Lineage {
+    pub parents: Vec<StoryRef>,
+    pub children: Vec<StoryRef>,
+    pub merged_from: Vec<StoryRef>,
+    pub merged_into: Option<StoryRef>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct StoryDetail {
     #[serde(flatten)]
     pub card: StoryCard,
     pub articles: Vec<ArticleView>,
-    pub parents: Vec<StoryRef>,
-    pub children: Vec<StoryRef>,
-    pub merged_from: Vec<StoryRef>,
-    pub merged_into: Option<StoryRef>,
+    pub lineage: Lineage,
     pub events: Vec<serde_json::Value>,
 }
 
@@ -165,12 +171,17 @@ pub async fn stories(c: &impl GenericClient, q: &StoryQuery) -> Result<Vec<Story
                     counts.langs AS l,
                     -- Updated-offset as of `at`: the last event at or before it.
                     (SELECT MAX(input_offset) FROM story_events e
-                      WHERE e.story_id = alive.id AND e.input_offset <= $1) AS updated_offset_at
+                      WHERE e.story_id = alive.id AND e.input_offset <= $1) AS updated_offset_at,
+                    -- Updated time as of `at`, set the way the writer sets it.
+                    COALESCE((SELECT event_time FROM story_events e
+                               WHERE e.story_id = alive.id AND e.kind IN ('created', 'updated')
+                                 AND e.input_offset <= $1
+                               ORDER BY e.input_offset DESC, e.seq DESC LIMIT 1), alive.updated_at) AS updated_at_at
              FROM alive JOIN counts ON counts.story_id = alive.id
              WHERE counts.source_count >= $2
                AND ($3::text IS NULL OR $3 = ANY(counts.langs))
          )
-         SELECT id, headline_article_id, lang, l, n, s, created_at, updated_at,
+         SELECT id, headline_article_id, lang, l, n, s, created_at, updated_at_at,
                 CASE WHEN closed_offset <= $1 THEN closed_at END,
                 CASE WHEN closed_offset <= $1 THEN close_reason END,
                 parent_ids, merged_from,
@@ -383,12 +394,14 @@ pub async fn story(c: &impl GenericClient, id: &str, at: i64) -> Result<Option<S
         .collect();
 
     Ok(Some(StoryDetail {
-        parents: refs(c, &card.parent_ids).await?,
-        children: refs(c, &children).await?,
-        merged_from: refs(c, &card.merged_from).await?,
-        merged_into: match &card.merged_into {
-            Some(target) => refs(c, std::slice::from_ref(target)).await?.pop(),
-            None => None,
+        lineage: Lineage {
+            parents: refs(c, &card.parent_ids).await?,
+            children: refs(c, &children).await?,
+            merged_from: refs(c, &card.merged_from).await?,
+            merged_into: match &card.merged_into {
+                Some(target) => refs(c, std::slice::from_ref(target)).await?.pop(),
+                None => None,
+            },
         },
         card,
         articles,
@@ -480,7 +493,9 @@ pub struct TimelineBucket {
     pub closed: i64,
 }
 
-/// Activity over the whole history in equal buckets of pipeline time.
+/// Activity over the whole history in equal buckets of pipeline time. Every
+/// bucket is returned, empty ones included, so the buckets map linearly onto
+/// time; an empty bucket's offset is the last position before it.
 pub async fn timeline(c: &impl GenericClient, buckets: i32) -> Result<Vec<TimelineBucket>> {
     let rows = c
         .query(
@@ -495,16 +510,29 @@ pub async fn timeline(c: &impl GenericClient, buckets: i32) -> Result<Vec<Timeli
                         input_offset
                  FROM articles, bounds
              ),
-             e AS (
-                 SELECT a.b, ev.kind FROM story_events ev JOIN a ON a.input_offset = ev.input_offset
+             per_bucket AS (
+                 SELECT b, MAX(input_offset) AS off, COUNT(*) AS n FROM a GROUP BY b
+             ),
+             ev AS (
+                 SELECT a.b,
+                        COUNT(*) FILTER (WHERE e.kind = 'created') AS created,
+                        COUNT(*) FILTER (WHERE e.kind = 'split') AS splits,
+                        COUNT(*) FILTER (WHERE e.kind = 'merged') AS merges,
+                        COUNT(*) FILTER (WHERE e.kind = 'closed') AS closed
+                 FROM story_events e JOIN a ON a.input_offset = e.input_offset
+                 GROUP BY a.b
              )
-             SELECT a.b, MAX(a.input_offset), COUNT(*),
-                    (SELECT COUNT(*) FROM e WHERE e.b = a.b AND e.kind = 'created'),
-                    (SELECT COUNT(*) FROM e WHERE e.b = a.b AND e.kind = 'split'),
-                    (SELECT COUNT(*) FROM e WHERE e.b = a.b AND e.kind = 'merged'),
-                    (SELECT COUNT(*) FROM e WHERE e.b = a.b AND e.kind = 'closed'),
-                    (SELECT lo + (hi - lo) * (a.b - 1) / $1 FROM bounds)
-             FROM a GROUP BY a.b ORDER BY a.b",
+             SELECT g.b,
+                    MAX(p.off) OVER (ORDER BY g.b),
+                    COALESCE(p.n, 0), COALESCE(ev.created, 0), COALESCE(ev.splits, 0),
+                    COALESCE(ev.merges, 0), COALESCE(ev.closed, 0),
+                    bounds.lo + (bounds.hi - bounds.lo) * (g.b - 1) / $1
+             FROM bounds
+             CROSS JOIN generate_series(1, $1) AS g(b)
+             LEFT JOIN per_bucket p ON p.b = g.b
+             LEFT JOIN ev ON ev.b = g.b
+             WHERE bounds.lo IS NOT NULL
+             ORDER BY g.b",
             &[&buckets],
         )
         .await?;
