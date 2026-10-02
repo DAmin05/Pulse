@@ -225,3 +225,65 @@ export type LiveEvent = {
 );
 
 export type EventKind = LiveEvent["kind"];
+
+// --- Listen ------------------------------------------------------------------
+
+export interface ListenLanguage {
+  code: string;
+  name: string;
+  native: string;
+  bcp47: string;
+}
+
+export interface ListenVoice {
+  id: string;
+  name: string;
+  description: string | null;
+}
+
+export interface ListenCapabilities {
+  languages: ListenLanguage[];
+  translation: { provider: string; budget: { used_this_month: number; monthly_limit: number } } | null;
+  speech: {
+    provider: "elevenlabs";
+    model: string;
+    default_voice: string;
+    voices: ListenVoice[];
+    budget: {
+      used_today: number;
+      daily_limit: number;
+      account: { used: number; limit: number; resets_at: number | null } | null;
+    };
+  } | null;
+  max_chars: number;
+}
+
+export interface BriefingSegment {
+  kind: "headline" | "coverage" | "report";
+  text: string;
+  original_lang: string;
+  translated: boolean;
+  source: { article_id: string; name: string; url: string; lang: string } | null;
+}
+
+export interface Briefing {
+  story_id: string;
+  lang: string;
+  bcp47: string;
+  text: string;
+  segments: BriefingSegment[];
+  translation: { provider: string; segments: number; cached_segments: number; characters: number } | null;
+  audio: {
+    url: string;
+    voice: string;
+    voice_name: string | null;
+    model: string;
+    /** [UTF-16 offset into `text`, seconds] per word. */
+    words: [number, number][];
+    duration: number;
+    characters: number;
+    cached: boolean;
+  } | null;
+  fallback: { reason: string; message: string } | null;
+  notice: string | null;
+}

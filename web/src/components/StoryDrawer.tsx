@@ -6,6 +6,7 @@ import type { ArticleView, LiveEvent, StoryRef } from "../api/types";
 import { clockTime, count, languageName, plural, relativeTime, sourceName } from "../lib/format";
 import { useReferenceTime } from "../lib/time";
 import { useApp } from "../live/store";
+import { ListenPanel } from "./ListenPanel";
 import { Sparkline } from "./Sparkline";
 
 const ARTICLES_SHOWN = 25;
@@ -14,6 +15,7 @@ export function StoryDrawer() {
   const selected = useApp((s) => s.selected);
   const select = useApp((s) => s.select);
   const story = useStory(selected);
+  const live = useApp((s) => s.view.mode === "live");
   const headingRef = useRef<HTMLHeadingElement>(null);
   // "Show all" applies to the story it was clicked on only.
   const [showAllFor, setShowAllFor] = useState<string | null>(null);
@@ -77,6 +79,8 @@ export function StoryDrawer() {
             <span aria-hidden>·</span>
             <span>first seen {relativeTime(data.created_at, reference)}</span>
           </p>
+
+          {live && <ListenPanel key={data.id} storyId={data.id} headline={data.headline} storyLangs={data.langs} />}
 
           <section className="drawer__section">
             <h3 className="section-title">Coverage, last 24 hours</h3>

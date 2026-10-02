@@ -4,7 +4,9 @@
 //! - [`writer`]: idempotent application of articles and story events, with the
 //!   consumed Kafka offsets committed in the same transaction (exactly-once sink).
 //! - [`reader`]: queries for the API, including time travel to any log position.
+//! - [`listen`]: translation/speech caches and provider usage for briefings.
 
+pub mod listen;
 pub mod reader;
 pub mod replays;
 pub mod writer;
@@ -21,6 +23,7 @@ pub const EVENTS_CHANNEL: &str = "pulse_events";
 const MIGRATIONS: &[(i32, &str)] = &[
     (1, include_str!("../migrations/001_read_model.sql")),
     (2, include_str!("../migrations/002_replays.sql")),
+    (3, include_str!("../migrations/003_listen.sql")),
 ];
 
 /// Connects a single client, driving its connection in the background.

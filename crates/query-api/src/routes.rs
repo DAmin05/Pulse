@@ -25,11 +25,14 @@ impl ApiError {
     pub fn bad_request(msg: impl Into<String>) -> Self {
         Self(StatusCode::BAD_REQUEST, msg.into())
     }
-    fn not_found(msg: impl Into<String>) -> Self {
+    pub fn not_found(msg: impl Into<String>) -> Self {
         Self(StatusCode::NOT_FOUND, msg.into())
     }
-    fn unavailable(msg: impl Into<String>) -> Self {
+    pub fn unavailable(msg: impl Into<String>) -> Self {
         Self(StatusCode::SERVICE_UNAVAILABLE, msg.into())
+    }
+    pub fn unprocessable(msg: impl Into<String>) -> Self {
+        Self(StatusCode::UNPROCESSABLE_ENTITY, msg.into())
     }
 }
 

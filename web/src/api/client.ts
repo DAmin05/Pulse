@@ -1,5 +1,7 @@
 import type {
+  Briefing,
   GraphResponse,
+  ListenCapabilities,
   PipelineResponse,
   Replay,
   SearchResponse,
@@ -44,16 +46,21 @@ export const api = {
   stats: () => get<StatsResponse>("/stats"),
   pipeline: () => get<PipelineResponse>("/pipeline"),
   replay: (id: string) => get<Replay>(`/replays/${encodeURIComponent(id)}`),
-  startReplay: async (body: { from: number; to: number }): Promise<Replay> => {
-    const res = await fetch("/api/replays", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new ApiError(res.status, err.error ?? res.statusText);
-    }
-    return res.json() as Promise<Replay>;
-  },
+  startReplay: (body: { from: number; to: number }) => post<Replay>("/replays", body),
+  listen: () => get<ListenCapabilities>("/listen"),
+  briefing: (id: string, body: { lang: string; voice?: string }) =>
+    post<Briefing>(`/stories/${encodeURIComponent(id)}/briefing`, body),
 };
+
+async function post<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`/api${path}`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, err.error ?? res.statusText);
+  }
+  return res.json() as Promise<T>;
+}

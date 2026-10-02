@@ -1,4 +1,4 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useApp, viewAt } from "../live/store";
 import { api } from "./client";
@@ -68,5 +68,33 @@ export function useSearch(q: string) {
     enabled: query.length >= 2,
     staleTime: 60_000,
     placeholderData: keepPreviousData,
+  });
+}
+
+export function useListen() {
+  return useQuery({
+    queryKey: ["listen"],
+    queryFn: api.listen,
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+/** A briefing is generated (and possibly paid for) only once asked for. */
+export function useBriefing(id: string | null, lang: string, voice: string | undefined, requested: boolean) {
+  const queryClient = useQueryClient();
+  return useQuery({
+    queryKey: ["briefing", id, lang, voice ?? "default"],
+    queryFn: async () => {
+      const briefing = await api.briefing(id!, { lang, voice });
+      // Characters were spent: refresh the budgets shown.
+      if ((briefing.audio && !briefing.audio.cached) || briefing.translation?.characters) {
+        void queryClient.invalidateQueries({ queryKey: ["listen"] });
+      }
+      return briefing;
+    },
+    enabled: requested && id !== null,
+    staleTime: Infinity,
+    retry: false,
   });
 }

@@ -10,8 +10,12 @@
 //!   queryable through the endpoints above.
 //! - `POST /api/replays`, `GET /api/replays[/{id}]`: re-drive a window of the
 //!   input log and diff it against the live output (one run at a time).
+//! - `GET /api/listen`, `POST /api/stories/{id}/briefing`, `GET /api/audio/{key}`:
+//!   a story briefing translated and read aloud (DeepL + ElevenLabs, cached,
+//!   budgeted; the browser's own voice when unavailable).
 //! - `GET /metrics`: Prometheus.
 
+mod listen;
 mod live;
 mod pipeline;
 mod replays;
@@ -27,12 +31,13 @@ use axum::Router;
 use axum::extract::{MatchedPath, Request};
 use axum::middleware::{self, Next};
 use axum::response::Response;
-use axum::routing::get;
+use axum::routing::{get, post};
 use metrics_exporter_prometheus::{Matcher, PrometheusBuilder, PrometheusHandle};
 use pulse_core::config::{Settings, env_or};
 use pulse_core::proto::v1::embedder_service_client::EmbedderServiceClient;
 use tonic::transport::{Channel, Endpoint};
 use tower_http::compression::CompressionLayer;
+use tower_http::compression::predicate::{DefaultPredicate, NotForContentType, Predicate};
 use tower_http::cors::CorsLayer;
 
 pub struct AppState {
@@ -49,6 +54,7 @@ pub struct AppState {
     /// `/api/pipeline` response, cached briefly (Prometheus + Kafka).
     pub pipeline_panel_cache: tokio::sync::Mutex<Option<(Instant, serde_json::Value)>>,
     pub prometheus_url: String,
+    pub listen: listen::Listen,
 }
 
 pub type Shared = Arc<AppState>;
@@ -124,6 +130,7 @@ async fn main() -> Result<()> {
         pipeline_cache: tokio::sync::Mutex::new(None),
         pipeline_panel_cache: tokio::sync::Mutex::new(None),
         prometheus_url: settings.prometheus_url.clone(),
+        listen: listen::Listen::from_env(&settings)?,
     });
 
     let app = Router::new()
@@ -139,9 +146,16 @@ async fn main() -> Result<()> {
         .route("/api/stream", get(live::stream))
         .route("/api/replays", get(replays::list).post(replays::create))
         .route("/api/replays/{id}", get(replays::get))
+        .route("/api/listen", get(listen::capabilities))
+        .route("/api/stories/{id}/briefing", post(listen::briefing))
+        .route("/api/audio/{key}", get(listen::audio))
         .route("/metrics", get(routes::metrics))
         .layer(middleware::from_fn(track))
-        .layer(CompressionLayer::new())
+        // MP3 is already compressed.
+        .layer(
+            CompressionLayer::new()
+                .compress_when(DefaultPredicate::new().and(NotForContentType::const_new("audio/"))),
+        )
         .layer(CorsLayer::permissive())
         .with_state(state);
 
