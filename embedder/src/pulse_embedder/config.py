@@ -19,7 +19,7 @@ def _int(name: str, default: int) -> int:
 class Settings:
     listen: str = "0.0.0.0:50061"
     model_dir: Path = DEFAULT_MODEL_DIR
-    precision: str = "int8"  # fp32 | int8 (int8: ~2x faster, cosine >= 0.996 vs fp32)
+    precision: str = "int8"  # fp32 | int8 (int8: ~2x faster; median cosine 0.997 vs fp32, see bench/precision.py)
     max_batch: int = 64
     max_wait_ms: int = 5
     max_tokens: int = 256

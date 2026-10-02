@@ -71,13 +71,13 @@ echo "  final run: committed $(committed)/$expected"
 result=$("$PULSE" topic check "$TOPIC" || true)
 echo "$result" | sed 's/^/  /'
 records=$(echo "$result" | awk '/^records/ {print $2}')
-dupes=$(echo "$result" | awk '/^duplicate keys/ {print $3}')
+dupes=$(echo "$result" | awk '/^duplicate ids/ {print $3}')
 
 if [[ "$records" == "$expected" && "$dupes" == "0" ]]; then
   rpk topic delete "$TOPIC" >/dev/null
   rpk group delete "$RUN" >/dev/null 2>&1 || true
   echo "PASS: $records/$expected articles, 0 duplicates across $KILLS kill -9 rounds"
 else
-  echo "FAIL: $records/$expected articles, $dupes duplicate keys (kept $TOPIC; log: $LOG)"
+  echo "FAIL: $records/$expected articles, $dupes duplicate ids (kept $TOPIC; log: $LOG)"
   exit 1
 fi
