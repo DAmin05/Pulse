@@ -69,6 +69,18 @@ bench: py-proto ## Benchmark dynamic batching (needs a fixture; FIXTURE=...)
 chaos-relay: ## kill -9 the relay repeatedly; verify exactly-once output
 	scripts/chaos/relay.sh 5
 
+# --- Story Processor ---------------------------------------------------------
+
+EMBEDDED ?= data/fixtures/smoke.pulseem
+cluster-eval: ## Cluster an embedded fixture and print story quality (EMBEDDED=...)
+	cargo run -q -p story-processor --release -- eval --fixture $(EMBEDDED) --top 10 --audit 10
+
+cluster-sweep: ## Sweep similarity thresholds on an embedded fixture
+	cargo run -q -p story-processor --release -- sweep --fixture $(EMBEDDED)
+
+ann-recall: ## HNSW recall@10 vs brute force on an embedded fixture
+	cargo run -q -p story-processor --release -- recall --fixture $(EMBEDDED)
+
 # --- Rust --------------------------------------------------------------------
 
 build: ## Build all Rust crates

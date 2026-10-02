@@ -1,7 +1,522 @@
-//! Stateful story clustering with exactly-once semantics and replay mode.
+//! Story Processor CLI. Phase 3: offline evaluation on fixture files.
+//! Phase 4 adds the live Kafka mode with checkpoints and transactions.
 
-fn main() -> anyhow::Result<()> {
+use std::collections::BTreeMap;
+use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
+use std::time::Instant;
+
+use anyhow::{Context, Result};
+use clap::{Args, Parser, Subcommand};
+use prost::Message;
+use pulse_core::fixture;
+use pulse_core::proto::v1::EmbeddedArticle;
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
+
+use story_processor::ann::{BruteForce, Hnsw, HnswParams, VectorIndex};
+use story_processor::centering::Centering;
+use story_processor::engine::{Config, Engine, Outcome};
+
+#[derive(Parser)]
+#[command(name = "story-processor", about = "Pulse Story Processor")]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Cluster a fixture and report story quality, throughput and the output hash.
+    Eval {
+        #[arg(long)]
+        fixture: PathBuf,
+        #[command(flatten)]
+        tuning: Tuning,
+        /// Stories to print (ranked by distinct sources).
+        #[arg(long, default_value_t = 15)]
+        top: usize,
+        /// Write a markdown report of every multi-source story here.
+        #[arg(long)]
+        report: Option<PathBuf>,
+        /// List the N joined articles least similar to their story's centroid.
+        #[arg(long, default_value_t = 0)]
+        audit: usize,
+    },
+    /// Fit per-language mean vectors on a fixture and freeze them in a file.
+    Calibrate {
+        #[arg(long)]
+        fixture: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        /// Languages with fewer articles use the global mean.
+        #[arg(long, default_value_t = 30)]
+        min_samples: usize,
+    },
+    /// Grid over the similarity thresholds, one summary row per setting.
+    Sweep {
+        #[arg(long)]
+        fixture: PathBuf,
+        #[arg(long)]
+        centering: Option<PathBuf>,
+        #[arg(long, value_delimiter = ',', default_value = "0.84,0.86,0.88,0.90")]
+        neighbor: Vec<f32>,
+        #[arg(long, value_delimiter = ',', default_value = "0.82,0.84,0.86,0.88")]
+        centroid: Vec<f32>,
+    },
+    /// HNSW recall@k and speed against brute force on the fixture's vectors.
+    Recall {
+        #[arg(long)]
+        fixture: PathBuf,
+        #[arg(long, default_value_t = 10)]
+        k: usize,
+        /// Fraction of vectors held out as queries.
+        #[arg(long, default_value_t = 0.1)]
+        holdout: f64,
+        #[arg(long, value_delimiter = ',', default_value = "16,32,64,128")]
+        ef: Vec<usize>,
+    },
+}
+
+#[derive(Args, Clone)]
+struct Tuning {
+    /// Per-language centering file from `calibrate`. Defaults to
+    /// config/centering/<model version>.json when that exists.
+    #[arg(long)]
+    centering: Option<PathBuf>,
+    /// Cluster raw vectors (for comparison).
+    #[arg(long)]
+    no_centering: bool,
+    #[arg(long)]
+    neighbor_similarity: Option<f32>,
+    #[arg(long)]
+    centroid_similarity: Option<f32>,
+    #[arg(long)]
+    dup_jaccard: Option<f32>,
+    /// Member neighbors needed to join an established story (1 disables).
+    #[arg(long)]
+    min_votes: Option<usize>,
+    /// Cohesion margin; a negative value disables the check.
+    #[arg(long, allow_hyphen_values = true)]
+    cohesion_margin: Option<f32>,
+}
+
+impl Tuning {
+    fn config(&self, inputs: &[EmbeddedArticle]) -> Result<Config> {
+        let d = Config::default();
+        Ok(Config {
+            neighbor_similarity: self.neighbor_similarity.unwrap_or(d.neighbor_similarity),
+            centroid_similarity: self.centroid_similarity.unwrap_or(d.centroid_similarity),
+            dup_jaccard: self.dup_jaccard.unwrap_or(d.dup_jaccard),
+            min_votes_established: self.min_votes.unwrap_or(d.min_votes_established),
+            cohesion_margin: match self.cohesion_margin {
+                Some(m) if m < 0.0 => None,
+                Some(m) => Some(m),
+                None => d.cohesion_margin,
+            },
+            centering: if self.no_centering {
+                None
+            } else {
+                resolve_centering(self.centering.as_deref(), inputs)?
+            },
+            ..d
+        })
+    }
+}
+
+/// Explicit path, else the conventional file for the fixture's model version.
+fn resolve_centering(
+    path: Option<&Path>,
+    inputs: &[EmbeddedArticle],
+) -> Result<Option<Arc<Centering>>> {
+    let path = match path {
+        Some(p) => p.to_path_buf(),
+        None => match inputs.first() {
+            Some(first) => {
+                let p = story_processor::centering::default_path(&first.model_version);
+                if !p.exists() {
+                    tracing::warn!(
+                        "no centering file at {}; clustering raw vectors",
+                        p.display()
+                    );
+                    return Ok(None);
+                }
+                p
+            }
+            None => return Ok(None),
+        },
+    };
+    Ok(Some(Arc::new(Centering::load(&path)?)))
+}
+
+fn main() -> Result<()> {
     pulse_core::telemetry::init("story-processor");
-    tracing::warn!("not implemented yet (phase 3)");
+    match Cli::parse().command {
+        Command::Eval {
+            fixture,
+            tuning,
+            top,
+            report,
+            audit,
+        } => {
+            let inputs = load(&fixture)?;
+            let cfg = tuning.config(&inputs)?;
+            eval(&fixture, inputs, cfg, top, report.as_deref(), audit)
+        }
+        Command::Calibrate {
+            fixture,
+            out,
+            min_samples,
+        } => {
+            let c = Centering::fit(&load(&fixture)?, min_samples)?;
+            c.save(&out)?;
+            println!(
+                "{} samples, {} languages with own mean ({}), model {} → {}",
+                c.samples,
+                c.per_lang.len(),
+                c.per_lang.keys().cloned().collect::<Vec<_>>().join(","),
+                c.model_version,
+                out.display()
+            );
+            Ok(())
+        }
+        Command::Sweep {
+            fixture,
+            centering,
+            neighbor,
+            centroid,
+        } => {
+            let inputs = load(&fixture)?;
+            let centering = resolve_centering(centering.as_deref(), &inputs)?;
+            sweep(&inputs, centering, &neighbor, &centroid)
+        }
+        Command::Recall {
+            fixture,
+            k,
+            holdout,
+            ef,
+        } => recall(&fixture, k, holdout, &ef),
+    }
+}
+
+fn load(path: &Path) -> Result<Vec<EmbeddedArticle>> {
+    fixture::read_all(path).with_context(|| format!("reading {}", path.display()))
+}
+
+struct RunStats {
+    outcomes: BTreeMap<&'static str, usize>,
+    events: usize,
+    hash: String,
+    seconds: f64,
+}
+
+fn run(inputs: &[EmbeddedArticle], cfg: Config) -> (Engine, RunStats) {
+    let mut engine = Engine::new(cfg);
+    let mut outcomes = BTreeMap::new();
+    let mut hasher = Sha256::new();
+    let mut events = 0;
+    let started = Instant::now();
+    for (offset, input) in inputs.iter().enumerate() {
+        let (outcome, out) = engine.process(input, offset as i64);
+        let label = match outcome {
+            Outcome::Invalid => "invalid",
+            Outcome::ExactDuplicate => "exact_duplicate",
+            Outcome::NearDuplicate => "near_duplicate",
+            Outcome::Joined => "joined",
+            Outcome::Created => "created",
+        };
+        *outcomes.entry(label).or_default() += 1;
+        for e in &out {
+            hasher.update(e.encode_to_vec());
+        }
+        events += out.len();
+    }
+    let seconds = started.elapsed().as_secs_f64();
+    let hash = hex::encode(&hasher.finalize()[..8]);
+    (
+        engine,
+        RunStats {
+            outcomes,
+            events,
+            hash,
+            seconds,
+        },
+    )
+}
+
+struct Summary {
+    stories: usize,
+    singletons: usize,
+    multi_source: usize,
+    cross_lingual: usize,
+    largest: usize,
+    /// Share of articles in multi-source stories.
+    covered: f64,
+}
+
+fn summarize(engine: &Engine) -> Summary {
+    let stories = engine.stories.values();
+    let n_articles = engine.articles.len().max(1);
+    Summary {
+        stories: engine.stories.len(),
+        singletons: stories.clone().filter(|s| s.members.len() == 1).count(),
+        multi_source: stories.clone().filter(|s| s.sources.len() >= 2).count(),
+        cross_lingual: stories.clone().filter(|s| s.langs.len() >= 2).count(),
+        largest: stories.clone().map(|s| s.members.len()).max().unwrap_or(0),
+        covered: stories
+            .filter(|s| s.sources.len() >= 2)
+            .map(|s| s.members.len())
+            .sum::<usize>() as f64
+            / n_articles as f64,
+    }
+}
+
+fn eval(
+    path: &Path,
+    inputs: Vec<EmbeddedArticle>,
+    cfg: Config,
+    top: usize,
+    report: Option<&Path>,
+    audit: usize,
+) -> Result<()> {
+    println!(
+        "config: centering={} neighbor≥{} centroid≥{} min_votes={} cohesion_margin={:?} \
+         dup_jaccard≥{} k={} ef_search={}",
+        cfg.centering
+            .as_ref()
+            .map_or("off", |c| c.model_version.as_str()),
+        cfg.neighbor_similarity,
+        cfg.centroid_similarity,
+        cfg.min_votes_established,
+        cfg.cohesion_margin,
+        cfg.dup_jaccard,
+        cfg.k,
+        cfg.hnsw.ef_search
+    );
+    let (engine, stats) = run(&inputs, cfg);
+    let s = summarize(&engine);
+
+    println!("\ninputs        {}", inputs.len());
+    for (label, n) in &stats.outcomes {
+        println!(
+            "  {label:<15} {n:>6}  ({:.1}%)",
+            100.0 * *n as f64 / inputs.len() as f64
+        );
+    }
+    println!(
+        "stories       {}  (singletons {:.0}%, multi-source {}, cross-lingual {}, largest {})",
+        s.stories,
+        100.0 * s.singletons as f64 / s.stories.max(1) as f64,
+        s.multi_source,
+        s.cross_lingual,
+        s.largest
+    );
+    println!(
+        "coverage      {:.1}% of articles are in multi-source stories",
+        100.0 * s.covered
+    );
+    println!(
+        "throughput    {:.0} articles/s ({:.2}s)",
+        inputs.len() as f64 / stats.seconds,
+        stats.seconds
+    );
+    println!("events        {}  sha256 {}", stats.events, stats.hash);
+
+    let mut ranked: Vec<_> = engine
+        .stories
+        .values()
+        .filter(|s| s.sources.len() >= 2)
+        .collect();
+    ranked.sort_by(|a, b| {
+        b.sources
+            .len()
+            .cmp(&a.sources.len())
+            .then(b.members.len().cmp(&a.members.len()))
+            .then(a.id.cmp(&b.id))
+    });
+
+    let describe = |story: &story_processor::engine::Story, members: usize| {
+        let mut text = String::new();
+        let headline = &engine.articles[story.headline as usize];
+        let _ = writeln!(
+            text,
+            "{} articles · {} sources · {}\n  ★ {}",
+            story.members.len(),
+            story.sources.len(),
+            story.langs.iter().cloned().collect::<Vec<_>>().join(","),
+            headline.title
+        );
+        for &m in story
+            .members
+            .iter()
+            .filter(|&&m| m != story.headline)
+            .take(members)
+        {
+            let a = &engine.articles[m as usize];
+            let mark = if a.duplicate_of.is_some() {
+                "≈"
+            } else {
+                "·"
+            };
+            let _ = writeln!(text, "  {mark} [{} {}] {}", a.lang, a.source_id, a.title);
+        }
+        text
+    };
+
+    println!("\ntop {top} stories by distinct sources:");
+    for story in ranked.iter().take(top) {
+        print!("\n{}", describe(story, 5));
+    }
+
+    if audit > 0 {
+        // Precision check: the weakest joins are where false merges show up first.
+        let mut weakest: Vec<(f32, u32, u32)> = Vec::new();
+        for (&story_key, story) in &engine.stories {
+            if story.originals.len() < 2 {
+                continue;
+            }
+            let centroid = story.centroid();
+            for &m in story.originals.iter().filter(|&&m| m != story_key) {
+                if let Some(v) = engine.indexed_vector(m) {
+                    weakest.push((story_processor::ann::dot(v, &centroid), m, story.headline));
+                }
+            }
+        }
+        weakest.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        println!(
+            "
+{audit} weakest joins (similarity to story centroid):"
+        );
+        for (sim, m, headline) in weakest.iter().take(audit) {
+            let a = &engine.articles[*m as usize];
+            let h = &engine.articles[*headline as usize];
+            println!(
+                "\n  {sim:.3}  [{} {}] {}\n     story: {}",
+                a.lang, a.source_id, a.title, h.title
+            );
+        }
+    }
+
+    if let Some(out) = report {
+        let mut md = format!(
+            "# Story report\n\nFixture `{}` · {} inputs · {} stories · {} multi-source\n\n",
+            path.display(),
+            inputs.len(),
+            s.stories,
+            s.multi_source
+        );
+        for story in &ranked {
+            let _ = write!(md, "```\n{}```\n\n", describe(story, usize::MAX));
+        }
+        if let Some(dir) = out.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(out, md)?;
+        println!("\nreport: {}", out.display());
+    }
+    Ok(())
+}
+
+fn sweep(
+    inputs: &[EmbeddedArticle],
+    centering: Option<Arc<Centering>>,
+    neighbor: &[f32],
+    centroid: &[f32],
+) -> Result<()> {
+    println!(
+        "{:>8} {:>8} {:>8} {:>10} {:>12} {:>13} {:>8} {:>9}",
+        "neighbor",
+        "centroid",
+        "stories",
+        "singletons",
+        "multi-source",
+        "cross-lingual",
+        "largest",
+        "coverage"
+    );
+    for &n in neighbor {
+        for &c in centroid {
+            let cfg = Config {
+                neighbor_similarity: n,
+                centroid_similarity: c,
+                centering: centering.clone(),
+                ..Config::default()
+            };
+            let (engine, _) = run(inputs, cfg);
+            let s = summarize(&engine);
+            println!(
+                "{n:>8.2} {c:>8.2} {:>8} {:>9.0}% {:>12} {:>13} {:>8} {:>8.1}%",
+                s.stories,
+                100.0 * s.singletons as f64 / s.stories.max(1) as f64,
+                s.multi_source,
+                s.cross_lingual,
+                s.largest,
+                100.0 * s.covered
+            );
+        }
+    }
+    Ok(())
+}
+
+fn recall(path: &Path, k: usize, holdout: f64, efs: &[usize]) -> Result<()> {
+    let inputs = load(path)?;
+    let vectors: Vec<&[f32]> = inputs.iter().map(|i| i.vector.as_slice()).collect();
+    let dim = vectors.first().context("empty fixture")?.len();
+    let split = ((1.0 - holdout) * vectors.len() as f64) as usize;
+    let (indexed, queries) = vectors.split_at(split);
+
+    let mut oracle = BruteForce::new(dim);
+    let started = Instant::now();
+    let mut hnsw = Hnsw::new(dim, HnswParams::default());
+    for (i, v) in indexed.iter().enumerate() {
+        hnsw.insert(i as u32, v);
+    }
+    let build = started.elapsed().as_secs_f64();
+    for (i, v) in indexed.iter().enumerate() {
+        oracle.insert(i as u32, v);
+    }
+
+    let started = Instant::now();
+    let truth: Vec<Vec<u32>> = queries
+        .iter()
+        .map(|q| oracle.search(q, k).into_iter().map(|(id, _)| id).collect())
+        .collect();
+    let brute_qps = queries.len() as f64 / started.elapsed().as_secs_f64();
+
+    println!(
+        "{} indexed, {} queries, dim {dim}; HNSW build {:.2}s ({:.0} inserts/s); brute force {:.0} q/s",
+        indexed.len(),
+        queries.len(),
+        build,
+        indexed.len() as f64 / build,
+        brute_qps
+    );
+    println!("{:>6} {:>10} {:>10}", "ef", "recall@k", "q/s");
+    for &ef in efs {
+        let mut params = hnsw.params().clone();
+        params.ef_search = ef;
+        let index = {
+            // Same graph, different search beam.
+            let mut h = Hnsw::new(dim, params);
+            for (i, v) in indexed.iter().enumerate() {
+                h.insert(i as u32, v);
+            }
+            h
+        };
+        let started = Instant::now();
+        let mut hits = 0;
+        for (q, t) in queries.iter().zip(&truth) {
+            hits += index
+                .search(q, k)
+                .iter()
+                .filter(|(id, _)| t.contains(id))
+                .count();
+        }
+        let qps = queries.len() as f64 / started.elapsed().as_secs_f64();
+        println!(
+            "{ef:>6} {:>10.4} {qps:>10.0}",
+            hits as f64 / (queries.len() * k) as f64
+        );
+    }
     Ok(())
 }

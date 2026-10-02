@@ -102,11 +102,12 @@ impl Normalizer {
         }
 
         let lang = resolve_lang(source, c.lang_hint.as_deref(), &title, &summary);
+        let source_id = publisher_id(source, &url);
 
         Ok(Normalized {
             article: Article {
                 id: ids::article_id(&url),
-                source_id: source.id.clone(),
+                source_id,
                 source_kind: source_kind(source.kind) as i32,
                 url,
                 title,
@@ -118,6 +119,22 @@ impl Normalizer {
             },
             correction,
         })
+    }
+}
+
+/// RSS feeds are one publisher each, so the source id names them. Aggregated
+/// sources (GDELT) carry many publishers; attribute those to the article's
+/// domain (`gdelt-english:lemonde.fr`) so per-story source counts stay meaningful.
+fn publisher_id(source: &SourceConfig, canonical_url: &str) -> String {
+    match source.kind {
+        Kind::Rss => source.id.clone(),
+        Kind::Gdelt => {
+            let host = url::Url::parse(canonical_url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned))
+                .unwrap_or_default();
+            format!("{}:{host}", source.id)
+        }
     }
 }
 
@@ -232,6 +249,22 @@ mod tests {
             n.normalize(&src, bad_url, NOW).unwrap_err(),
             Rejection::InvalidUrl
         );
+    }
+
+    #[test]
+    fn gdelt_articles_are_attributed_to_their_publisher() {
+        let gdelt: SourceConfig =
+            toml::from_str("id = \"gdelt-english\"\nkind = \"gdelt\"\nstream = \"english\"")
+                .unwrap();
+        let mut c = candidate(Some(NOW));
+        c.url = "https://www.lemonde.fr/article/1".into();
+        let a = normalizer().normalize(&gdelt, c, NOW).unwrap().article;
+        assert_eq!(a.source_id, "gdelt-english:lemonde.fr");
+        let rss = normalizer()
+            .normalize(&source(None, false), candidate(Some(NOW)), NOW)
+            .unwrap()
+            .article;
+        assert_eq!(rss.source_id, "t");
     }
 
     #[test]

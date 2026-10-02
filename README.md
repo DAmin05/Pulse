@@ -15,12 +15,12 @@ crates/
   pulse-cli/         `pulse` developer CLI (doctor, fixture record/stats)
   ingestor/          RSS + GDELT polling → articles.raw
   embed-relay/       articles.raw → Embedder → articles.embedded (Kafka transactions)
-  story-processor/   clustering, checkpoints, replay mode          (phases 3–5, 7)
+  story-processor/   dedup + clustering engine, eval tooling (live mode: phase 4)
   story-sink/        stories.events → Postgres                     (phase 6)
   query-api/         Axum REST + SSE                               (phase 6)
 embedder/            Python gRPC embedding service (ONNX, dynamic batching)
 proto/               protobuf schemas (buf-managed)
-config/              sources.toml (feed catalog)
+config/              sources.toml (feed catalog), centering/ (frozen per-language means)
 deploy/              docker-compose stack and its config
 docs/                design and plan
 ```
@@ -122,6 +122,54 @@ so trust the trends over single points.
   batch composition.
 
 `pulse topic check <topic>` counts committed records and duplicate keys in any topic.
+
+## Story Processor
+
+```bash
+pulse fixture record --topic articles.embedded --since 72h --out data/fixtures/x.pulseem
+make cluster-eval EMBEDDED=data/fixtures/x.pulseem   # stories, quality stats, weakest joins
+make cluster-sweep EMBEDDED=...                     # threshold grid
+make ann-recall EMBEDDED=...                        # HNSW vs brute force
+embed-relay embed-fixture in.pulsefx out.pulseem    # embed a raw fixture offline
+```
+
+For each embedded article, in log order:
+
+1. **Exact duplicate** (same id): ignored.
+2. **Near duplicate** (MinHash LSH on character 5-grams, 128 hashes in 16×8 bands,
+   estimated Jaccard ≥ 0.8): attached to the original's story as a syndicated copy.
+   It stays out of the vector index and the centroid.
+3. **Vote:** the 10 nearest articles in a deterministic **HNSW** index (our own
+   implementation: seeded levels, ties broken by key) vote for their stories. The
+   winner is joined if the article also fits the story's centroid. Otherwise it
+   starts a new story.
+
+What made clustering work:
+
+- **Per-language mean centering.** Raw e5 vectors are anisotropic: unrelated articles
+  in the same language score about 0.78 cosine, and each language has its own offset,
+  so same-language topic clusters crowd out cross-lingual matches of real events.
+  Subtracting frozen per-language means (`config/centering/<model>.json`, fit with
+  `story-processor calibrate`) centers unrelated pairs at 0. That **tripled
+  cross-lingual stories** at equal coverage.
+- **Drift guards.** Joining an established story (3+ articles) needs 2 of its members
+  among the neighbors, and centroid fit within 0.10 of the story's own cohesion.
+  Without them, chains of locally similar headlines grow into "anything about 2027
+  finances". With them, the largest GDELT cluster shrinks from 160 to 100 articles
+  while multi-source stories increase.
+
+| fixture | articles | stories with ≥2 sources | cross-lingual | HNSW recall@10 (ef 64) | throughput |
+|---|---:|---:|---:|---:|---:|
+| RSS, 132 feeds, 72h | 3,989 | 302 | 118 | 0.996 | ~900/s |
+| GDELT translingual, 4h | 49,220 | 5,477 | 1,236 | 0.978 | ~700/s |
+
+Output is deterministic: the same fixture gives the same event hash on every run
+and across debug/release builds.
+
+Known limitations, planned for later phases: same-template events in different
+countries ("government presents 2027 budget") can share a story until **split
+detection** separates them (phase 5). Evergreen genres (horoscopes) cluster
+together; they're rare in the curated RSS feeds but common in GDELT.
 
 ## Local services
 

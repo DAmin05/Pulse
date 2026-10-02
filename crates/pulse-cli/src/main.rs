@@ -34,8 +34,11 @@ enum TopicCommand {
 
 #[derive(Subcommand)]
 enum FixtureCommand {
-    /// Record articles.raw into a fixture file, ordered by (fetched_at, id).
+    /// Record a topic into a fixture file. articles.raw is ordered by
+    /// (fetched_at, id); articles.embedded keeps log order.
     Record {
+        #[arg(long, default_value = pulse_core::topics::ARTICLES_RAW)]
+        topic: String,
         /// How far back to read, e.g. 24h, 90m.
         #[arg(long, default_value = "24h", value_parser = humantime::parse_duration)]
         since: std::time::Duration,
@@ -51,8 +54,8 @@ async fn main() -> anyhow::Result<()> {
     let settings = Settings::from_env();
     match Cli::parse().command {
         Command::Doctor => doctor::run(&settings).await,
-        Command::Fixture(FixtureCommand::Record { since, out }) => {
-            fixture::record(&settings, since, &out).await
+        Command::Fixture(FixtureCommand::Record { topic, since, out }) => {
+            fixture::record(&settings, &topic, since, &out).await
         }
         Command::Fixture(FixtureCommand::Stats { path }) => fixture::stats(&path),
         Command::Topic(TopicCommand::Check { topic }) => {

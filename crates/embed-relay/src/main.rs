@@ -1,6 +1,7 @@
 //! articles.raw → Embedder (gRPC) → articles.embedded, exactly once.
 
 mod embedder;
+mod offline;
 mod relay;
 
 use std::net::{Ipv4Addr, SocketAddr};
@@ -15,6 +16,23 @@ use tokio_util::sync::CancellationToken;
 async fn main() -> Result<()> {
     pulse_core::telemetry::init("embed-relay");
     let settings = Settings::from_env();
+
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if let [cmd, input, output] = args.as_slice() {
+        if cmd == "embed-fixture" {
+            let embedder = embedder::Embedder::connect_lazy(
+                &env_or("PULSE_EMBEDDER_URL", "http://localhost:50061"),
+                env_or("PULSE_RELAY_REQUEST_SIZE", "16").parse()?,
+                env_or("PULSE_RELAY_CONCURRENCY", "8").parse()?,
+            )?;
+            return offline::embed_fixture(&embedder, input.as_ref(), output.as_ref()).await;
+        }
+    }
+    anyhow::ensure!(
+        args.is_empty(),
+        "usage: embed-relay                         (relay articles.raw → articles.embedded)\n       \
+         embed-relay embed-fixture IN.pulsefx OUT.pulseem"
+    );
 
     let metrics_port: u16 = env_or("PULSE_RELAY_METRICS_PORT", "9106").parse()?;
     PrometheusBuilder::new()

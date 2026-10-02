@@ -154,7 +154,9 @@ message StoryEvent {
 - New article → k=10 nearest neighbors → similarity-weighted vote over their stories → join if score ≥ threshold, else create a story.
 - e5 cosine scores sit in a compressed high range — thresholds must be tuned on the fixture, not guessed.
 - Rebuild the index on housekeeping ticks with active-story articles only (fixed seed, log order).
-- Library: `usearch` behind a trait; brute-force cosine oracle for tests. Stretch: own HNSW implementation.
+- **Own HNSW implementation** (seeded level RNG, `(distance, key)` ordering, paper's neighbor heuristic). Rust HNSW crates use unseeded RNGs, which would break replay determinism, and `usearch` needs a C++ toolchain. Brute-force oracle for tests. Recall@10 ≥ 0.978 at 44k vectors (ef 64).
+- **Per-language mean centering** before indexing (frozen file per model version) removes e5 anisotropy and language offset. Thresholds are on centered cosine: neighbor ≥ 0.50, centroid ≥ 0.50.
+- **Drift guards**: ≥2 member votes to join established stories (≥3 members); centroid fit ≥ story cohesion − 0.10.
 - Cross-lingual: a Spanish and an English article about the same event land in the same story.
 
 ### 5.5 Split / merge
@@ -231,7 +233,7 @@ Time travel:
 | 0 | Foundations | Cargo workspace, `pulse-core`, `buf` + protos, docker-compose (Redpanda, Postgres+pgvector, SeaweedFS, Prometheus, Grafana), CI | `make up` works, CI green |
 | 1 | Ingestor | Source trait, RSS adapter, `sources.toml` (~100+ multilingual feeds), language detection, GDELT adapter, metrics | 24h unattended run; **record 24h of `articles.raw` as the golden fixture** |
 | 2 | Embedder | gRPC service, dynamic batching + length bucketing, ONNX model (fp32/int8), Rust embed relay with Kafka transactions, relay chaos test, benchmark | Benchmark chart; fixture embedded; relay passes kill -9 test |
-| 3 | Processor v1 | Dedup + clustering + story events (no fault tolerance yet) | Sensible stories on fixture (incl. cross-lingual); HNSW recall ≥ 0.95 vs. oracle |
+| 3 | Processor v1 | Dedup + clustering + story events (no fault tolerance yet); eval/sweep/recall tooling; centering; drift guards | ✅ Sensible stories on RSS and 49k GDELT fixtures (cross-lingual); HNSW recall ≥ 0.95 vs. oracle |
 | 4 | Correctness | Watermarks, late handling, epoch transactions, checkpoints, recovery | Determinism test + 50-kill chaos test pass in CI |
 | 5 | Split / merge | Ticks, split/merge with hysteresis, lineage | Hand-verified events on fixture; thresholds tuned |
 | 6 | Sink + API | Story Sink, Postgres schema, Axum endpoints, SSE | `curl /stream` shows live events; `as_of` works |
@@ -268,6 +270,8 @@ Deployment is deliberately out of scope until phase 10 is done.
 | HNSW lib nondeterministic / not serializable | Trait abstraction; brute-force fallback; own implementation |
 | rdkafka transaction edge cases | Short epochs, `transaction.timeout.ms` > checkpoint upload time, chaos test |
 | Split flapping | Min component sizes, hysteresis, cooldowns |
+| Same-template events across countries share a story ("2027 budget" in FR/CL/RU) | Split detection on internal components (phase 5); GDELT 4h fixture is the test case |
+| Evergreen genres (horoscopes) cluster | Content-type filter, mostly a GDELT problem |
 | Bad feed timestamps | Clamp + count |
 | Language detection errors on short text | Prefer feed-declared language; detect on title + summary |
 | TTS / translation quota exhaustion | Cache, daily budget, Web Speech fallback |

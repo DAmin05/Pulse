@@ -1,36 +1,50 @@
-//! `pulse fixture record|stats`: capture `articles.raw` into a golden fixture
-//! file and summarize fixture contents.
+//! `pulse fixture record|stats`: capture a topic into a golden fixture file and
+//! summarize fixture contents.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
-use prost::Message as _;
-use pulse_core::fixture::{self, FixtureWriter};
-use pulse_core::proto::v1::Article;
+use pulse_core::fixture::{self, FixtureRecord, FixtureWriter};
+use pulse_core::proto::v1::{Article, EmbeddedArticle};
 use pulse_core::{config::Settings, kafka, topics};
 use rdkafka::Message as _;
 
-pub async fn record(settings: &Settings, since: Duration, out: &Path) -> Result<()> {
+pub async fn record(settings: &Settings, topic: &str, since: Duration, out: &Path) -> Result<()> {
+    match topic {
+        topics::ARTICLES_RAW => record_raw(settings, since, out).await,
+        topics::ARTICLES_EMBEDDED => record_embedded(settings, since, out).await,
+        other => bail!("cannot record {other}: expected articles.raw or articles.embedded"),
+    }
+}
+
+/// Reads and decodes every record in `topic` since `since`, in partition order.
+async fn scan<M: FixtureRecord + Send + 'static>(
+    settings: &Settings,
+    topic: &'static str,
+    since: Duration,
+) -> Result<(Vec<M>, usize)> {
     let since_ms = Utc::now().timestamp_millis() - since.as_millis() as i64;
     let brokers = settings.kafka_brokers.clone();
-
-    let (articles, undecodable) = tokio::task::spawn_blocking(move || {
-        let mut articles = Vec::new();
+    tokio::task::spawn_blocking(move || {
+        let mut records = Vec::new();
         let mut undecodable = 0usize;
-        kafka::scan_since(&brokers, topics::ARTICLES_RAW, since_ms, |msg| {
-            match msg.payload().map(Article::decode) {
-                Some(Ok(a)) => articles.push(a),
+        kafka::scan_since(&brokers, topic, since_ms, |msg| {
+            match msg.payload().map(M::decode) {
+                Some(Ok(r)) => records.push(r),
                 _ => undecodable += 1,
             }
         })
-        .context("reading articles.raw")?;
-        anyhow::Ok((articles, undecodable))
+        .with_context(|| format!("reading {topic}"))?;
+        anyhow::Ok((records, undecodable))
     })
-    .await??;
+    .await?
+}
 
+async fn record_raw(settings: &Settings, since: Duration, out: &Path) -> Result<()> {
+    let (articles, undecodable) = scan::<Article>(settings, topics::ARTICLES_RAW, since).await?;
     // articles.raw has several partitions; impose one total order for replay.
     let total = articles.len();
     let mut seen = HashSet::new();
@@ -39,12 +53,7 @@ pub async fn record(settings: &Settings, since: Duration, out: &Path) -> Result<
         .filter(|a| seen.insert(a.id.clone()))
         .collect();
     articles.sort_by(|a, b| (a.fetched_at_ms, &a.id).cmp(&(b.fetched_at_ms, &b.id)));
-
-    let mut writer = FixtureWriter::create(out)?;
-    for a in &articles {
-        writer.write(a)?;
-    }
-    let written = writer.finish()?;
+    let written = write(out, &articles)?;
     println!(
         "wrote {written} articles to {} (skipped {undecodable} undecodable, {} duplicate ids)",
         out.display(),
@@ -53,9 +62,36 @@ pub async fn record(settings: &Settings, since: Duration, out: &Path) -> Result<
     Ok(())
 }
 
+async fn record_embedded(settings: &Settings, since: Duration, out: &Path) -> Result<()> {
+    // Single partition: log order is already the processing order. Keep it.
+    let (records, undecodable) =
+        scan::<EmbeddedArticle>(settings, topics::ARTICLES_EMBEDDED, since).await?;
+    let written = write(out, &records)?;
+    println!(
+        "wrote {written} embedded articles to {} in log order (skipped {undecodable} undecodable)",
+        out.display()
+    );
+    Ok(())
+}
+
+fn write<M: FixtureRecord>(out: &Path, records: &[M]) -> Result<usize> {
+    let mut writer = FixtureWriter::<M>::create(out)?;
+    for r in records {
+        writer.write(r)?;
+    }
+    Ok(writer.finish()?)
+}
+
 pub fn stats(path: &Path) -> Result<()> {
-    let articles =
-        fixture::read_all(path).with_context(|| format!("reading {}", path.display()))?;
+    let magic = fixture::magic(path).with_context(|| format!("reading {}", path.display()))?;
+    let (articles, embedded): (Vec<Article>, Option<Vec<EmbeddedArticle>>) =
+        if &magic == EmbeddedArticle::MAGIC {
+            let records: Vec<EmbeddedArticle> = fixture::read_all(path)?;
+            let articles = records.iter().filter_map(|r| r.article.clone()).collect();
+            (articles, Some(records))
+        } else {
+            (fixture::read_all(path)?, None)
+        };
     if articles.is_empty() {
         println!("{}: empty", path.display());
         return Ok(());
@@ -107,6 +143,15 @@ pub fn stats(path: &Path) -> Result<()> {
 
     println!("file           {}", path.display());
     println!("articles       {}", articles.len());
+    if let Some(records) = &embedded {
+        let mut models: BTreeMap<&str, usize> = BTreeMap::new();
+        for r in records {
+            *models.entry(&r.model_version).or_default() += 1;
+        }
+        let dims: HashSet<usize> = records.iter().map(|r| r.vector.len()).collect();
+        println!("models         {}", top(&models, 3));
+        println!("dimensions     {dims:?}");
+    }
     println!("fetched        {}", range(|a| a.fetched_at_ms));
     println!("event time     {}", range(|a| a.published_at_ms));
     println!("languages      {} — {}", by_lang.len(), top(&by_lang, 12));
