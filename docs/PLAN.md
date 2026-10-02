@@ -30,10 +30,10 @@ Plus one user-facing feature:
 | Story Processor | Rust, manual epoch checkpointing + Kafka transactions |
 | Query API | Rust (Axum), **REST + SSE** |
 | Replay | Story Processor binary in `--replay` mode + thin diff service |
-| Frontend | TypeScript + React, Sigma.js/Graphology for the graph |
+| Frontend | TypeScript + React, d3-force drawn on canvas for the graph |
 | Broker | Redpanda (Kafka API) for local dev |
 | Storage | Postgres + pgvector (no Qdrant) |
-| Checkpoints | SeaweedFS (S3 API), local disk fallback |
+| Checkpoints | Local disk (snapshots are small and rebuilt from the log); SeaweedFS stores briefing audio |
 | Languages | **Multilingual** sources (free RSS available in many languages) |
 | Embedding model | `multilingual-e5-small` (384-d, ~100 languages, cross-lingual) |
 | TTS | ElevenLabs (on-demand, cached) + browser Web Speech API fallback |
@@ -48,9 +48,7 @@ Plus one user-facing feature:
 |---|---|---|
 | RSS feeds | Primary source | None (poll politely) |
 | GDELT GKG 15-min files (English + translingual) | Historical backfill into fixtures, load tests; opt-in sampled live stream | Free, no key. The DOC 2.0 API rate-limits too aggressively to rely on. Translingual files lag about 1h. Headlines only |
-| Guardian Open Platform | Rich metadata | Free dev key, non-commercial |
-| NYT Times Wire / Top Stories | Structured real-time listing | ~500 req/day |
-| Hacker News API | Tech stream | Free, no key |
+| Guardian, NYT, Hacker News | Covered through their RSS feeds; no API keys needed | None |
 
 Multilingual RSS candidates: BBC World Service language services (Mundo, Arabic, Persian,
 Hindi, Urdu, Russian, Turkish, Swahili, …), DW (30+ languages), France 24 (en/fr/es/ar),
@@ -240,7 +238,7 @@ Time travel:
 | 7 | Replay | Snapshot-or-scratch warm-up, byte-for-byte ordered diff of events + late articles, isolated output topic, API Replay Service (queued, persisted), perturbation control | ✅ Whole live history identical (4,912 events); windows identical; perturbed run caught; replays in CI |
 | 8 | Frontend | Canvas force graph (births, pulses, merge/split flashes), feed + live ticker, story drawer, ⌘K cross-lingual search, time-travel timeline with idle gaps, pipeline metrics panel (`/api/pipeline`), "Re-run this hour" replay verdicts; light/dark, responsive, reduced motion | ✅ Demo items 1–5 verified in the browser on live data (desktop, 900px, phone); replay of the last hour identical (3,047 / 3,047 events) |
 | 9 | Listen | Extractive briefings (native-language first), DeepL/LibreTranslate, ElevenLabs with word timestamps, content-addressed caches (Postgres + S3), daily/monthly/account budgets, Web Speech fallback, player with live transcript | ✅ French, German, Spanish and English played in the browser (provider stand-ins + browser voices); repeat request 24 ms with zero provider calls. Real keys: run once when added |
-| 10 | Polish | README, architecture diagram, benchmark and exactly-once write-ups, demo video | A stranger can clone and run the demo |
+| 10 | Polish | Single README in plain language (setup, tour, architecture diagram, how it works, exactly-once and benchmark write-ups, API, developer guide), screenshots, provisioned Grafana dashboard, int8 accuracy measurement, crash tests re-run; demo video by hand | ✅ Fresh clone builds, downloads the model and passes every check; processor chaos 50 kills identical; relay chaos 0 duplicates |
 
 Phases 1 and 2 can run in parallel. Phase 4 comes before split/merge on purpose.
 Deployment is deliberately out of scope until phase 10 is done.
