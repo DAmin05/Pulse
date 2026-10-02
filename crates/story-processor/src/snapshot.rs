@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::engine::{Config, Engine, State};
 
 const MAGIC: &[u8; 8] = b"PULSESP1";
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 2; // 2: lineage state (phase 5)
 const ZSTD_LEVEL: i32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -228,6 +228,40 @@ mod tests {
         }
     }
 
+    /// Strict joins fragment each topic into several stories, which lineage
+    /// then merges (titles share no rare words, so via the unanchored path).
+    fn merge_cfg() -> Config {
+        Config {
+            neighbor_similarity: 0.97,
+            centroid_similarity: 0.97,
+            lineage_every_inputs: 7,
+            merge_min_size: 1,
+            merge_min_similarity: 0.85,
+            merge_min_similarity_unanchored: 0.85,
+            lineage_cooldown_checks: 2,
+            ..Config::default()
+        }
+    }
+
+    /// Permissive joins + frequent lineage checks: stories mix topics and
+    /// split. Together with `merge_cfg`, exercises all lineage state.
+    fn lineage_cfg() -> Config {
+        Config {
+            neighbor_similarity: 0.3,
+            centroid_similarity: 0.3,
+            min_votes_established: 1,
+            cohesion_margin: None,
+            lineage_every_inputs: 7,
+            split_min_size: 6,
+            split_max_similarity: 0.5,
+            merge_min_size: 2,
+            merge_min_similarity: 0.6,
+            merge_min_similarity_unanchored: 0.85,
+            lineage_cooldown_checks: 2,
+            ..Config::default()
+        }
+    }
+
     fn run(engine: &mut Engine, inputs: &[EmbeddedArticle], from: usize) -> Vec<StoryEvent> {
         inputs[from..]
             .iter()
@@ -237,22 +271,31 @@ mod tests {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(12))]
+        #![proptest_config(ProptestConfig::with_cases(16))]
 
         /// The core guarantee: snapshot at any point, restore, continue — the
         /// events and final state are identical to never having stopped.
         #[test]
-        fn restore_anywhere_is_indistinguishable(seed in 1u64..u64::MAX, cut_pct in 0usize..100) {
+        fn restore_anywhere_is_indistinguishable(
+            seed in 1u64..u64::MAX,
+            cut_pct in 0usize..100,
+            variant in 0u8..3,
+        ) {
+            let config = || match variant {
+                0 => cfg(),
+                1 => lineage_cfg(),
+                _ => merge_cfg(),
+            };
             let inputs = stream(400, seed);
             let cut = inputs.len() * cut_pct / 100;
 
-            let mut straight = Engine::new(cfg());
+            let mut straight = Engine::new(config());
             let expected = run(&mut straight, &inputs, 0);
 
-            let mut first = Engine::new(cfg());
+            let mut first = Engine::new(config());
             let mut events = run(&mut first, &inputs[..cut], 0);
             let bytes = encode(&first, cut as i64).unwrap();
-            let (header, mut resumed) = decode(&bytes, cfg()).unwrap();
+            let (header, mut resumed) = decode(&bytes, config()).unwrap();
             prop_assert_eq!(header.next_offset, cut as i64);
             events.extend(run(&mut resumed, &inputs, cut));
 
@@ -290,6 +333,29 @@ mod tests {
             "late {late}, dropped {dropped}, closed {closed}, dups {dups}"
         );
         assert!(e.tombstones() < e.index_len() || e.index_len() == 0);
+    }
+
+    #[test]
+    fn lineage_stream_splits_and_merges() {
+        use pulse_core::proto::v1::story_event::Kind;
+
+        let count = |cfg: Config| {
+            let mut e = Engine::new(cfg);
+            let (mut splits, mut merges) = (0, 0);
+            for (i, input) in stream(400, 42).iter().enumerate() {
+                for ev in e.process(input, i as i64).events {
+                    match ev.kind {
+                        Some(Kind::Split(_)) => splits += 1,
+                        Some(Kind::Merged(_)) => merges += 1,
+                        _ => {}
+                    }
+                }
+            }
+            (splits, merges)
+        };
+        let (splits, _) = count(lineage_cfg());
+        let (_, merges) = count(merge_cfg());
+        assert!(splits > 0 && merges > 0, "splits {splits}, merges {merges}");
     }
 
     #[test]

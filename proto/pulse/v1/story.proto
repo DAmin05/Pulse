@@ -34,6 +34,8 @@ message StoryCreated {
   string seed_article_id = 2;
   string headline = 3;
   string lang = 4;
+  // Set when the story came out of a split: its lineage.
+  repeated string parent_story_ids = 5;
 }
 
 message ArticleAdded {
@@ -60,11 +62,23 @@ message StoryUpdated {
   repeated float centroid = 7;
 }
 
+// One story became several narratives. Followed by StoryCreated + StoryUpdated
+// for each child and StoryClosed (SPLIT) for the parent.
 message StorySplit {
+  reserved 2;
+  reserved "child_story_ids";
   string parent_story_id = 1;
-  repeated string child_story_ids = 2;
+  repeated SplitChild children = 3;
 }
 
+message SplitChild {
+  string story_id = 1;
+  // Every article of the parent lands in exactly one child.
+  repeated string article_ids = 2;
+}
+
+// Stories turned out to be one. Sources' articles move to the target.
+// Followed by StoryClosed (MERGED) for each source and StoryUpdated for the target.
 message StoryMerged {
   repeated string source_story_ids = 1;
   string target_story_id = 2;

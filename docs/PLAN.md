@@ -235,7 +235,7 @@ Time travel:
 | 2 | Embedder | gRPC service, dynamic batching + length bucketing, ONNX model (fp32/int8), Rust embed relay with Kafka transactions, relay chaos test, benchmark | Benchmark chart; fixture embedded; relay passes kill -9 test |
 | 3 | Processor v1 | Dedup + clustering + story events (no fault tolerance yet); eval/sweep/recall tooling; centering; drift guards | ✅ Sensible stories on RSS and 49k GDELT fixtures (cross-lingual); HNSW recall ≥ 0.95 vs. oracle |
 | 4 | Correctness | Watermarks (24h lateness), late routing, event-time housekeeping + bounded state, epoch transactions, log-structured snapshots + silent replay | ✅ Restore-anywhere property test; chaos test byte-identical after 50 kill -9s (in CI) |
-| 5 | Split / merge | Ticks, split/merge with hysteresis, lineage | Hand-verified events on fixture; thresholds tuned |
+| 5 | Split / merge | Log-position lineage checks on dirty stories, 2-means splits, centroid + anchor-word merges, hysteresis + cooldown, lineage in events | ✅ RSS: 4/4 merges correct, 0 false splits; GDELT reviewed (template limitation documented); restore-exact with lineage; chaos PASS |
 | 6 | Sink + API | Story Sink, Postgres schema, Axum endpoints, SSE | `curl /stream` shows live events; `as_of` works |
 | 7 | Replay | Replay mode, checkpoint index, diff service | "Replay last hour → 0 diffs" via API |
 | 8 | Frontend | Story graph, time-travel slider, metrics panel, story drawer | Demo items 1–5 work in the browser |

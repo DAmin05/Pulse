@@ -67,6 +67,35 @@ pub struct Config {
     pub seen_ids_window_ms: i64,
     /// Rebuild the vector index once evicted entries exceed this share of it.
     pub rebuild_tombstone_ratio: f32,
+    /// Split/merge detection runs every this many processed inputs. Driven by
+    /// log position (not wall clock) so it is deterministic, and by evidence:
+    /// a story's shape only changes when articles arrive.
+    pub lineage_every_inputs: u32,
+    /// Stories with at least this many indexed members are split candidates...
+    pub split_min_size: usize,
+    /// ...each resulting child needs at least this many...
+    pub split_min_component: usize,
+    /// ...and the two halves' centroids must be less similar than this.
+    pub split_max_similarity: f32,
+    /// Stories with at least this many indexed members can merge...
+    pub merge_min_size: usize,
+    /// ...when their centroids are at least this similar and they share an
+    /// anchor term. Kept well above `split_max_similarity` so a merged story
+    /// can't qualify to split back.
+    pub merge_min_similarity: f32,
+    /// Without a shared anchor term, merging needs this much similarity.
+    /// Headline embeddings over-weight templates ("2027 budget", TV listings);
+    /// real same-event stories almost always share a rare name.
+    pub merge_min_similarity_unanchored: f32,
+    /// A title word shared by two stories anchors them when at least this
+    /// share of all live articles containing it are in those two stories.
+    /// "Flydubai" is concentrated in its story's fragments; "budget" or
+    /// "Sendung" are spread over many unrelated stories.
+    pub anchor_min_concentration: f32,
+    /// A split/merge must qualify on this many consecutive checks (hysteresis).
+    pub lineage_confirm_checks: u32,
+    /// After a split/merge, the stories involved are left alone this many checks.
+    pub lineage_cooldown_checks: u64,
     pub hnsw: HnswParams,
     /// Frozen per-language means; inputs from other models are rejected.
     pub centering: Option<Arc<Centering>>,
@@ -94,6 +123,18 @@ impl Default for Config {
             dedup_window_ms: 72 * HOUR_MS,
             seen_ids_window_ms: 7 * 24 * HOUR_MS,
             rebuild_tombstone_ratio: 0.2,
+            lineage_every_inputs: 100,
+            split_min_size: 8,
+            split_min_component: 3,
+            // No false splits on either fixture at 0.50; at 0.55 GDELT split one
+            // event by language. Merges: RSS 4/4 correct at 0.72 + anchor.
+            split_max_similarity: 0.50,
+            merge_min_size: 3,
+            merge_min_similarity: 0.72,
+            merge_min_similarity_unanchored: 0.82,
+            anchor_min_concentration: 0.5,
+            lineage_confirm_checks: 2,
+            lineage_cooldown_checks: 6,
             hnsw: HnswParams::default(),
             centering: None,
         }
@@ -105,9 +146,9 @@ impl Config {
     /// built under one configuration is never resumed under another.
     pub fn fingerprint(&self) -> String {
         let mut h = Sha256::new();
-        // Two tuples: Debug is only implemented for tuples up to 12 elements.
+        // Several tuples: Debug is only implemented for tuples up to 12 elements.
         h.update(format!(
-            "{:?}{:?}",
+            "{:?}{:?}{:?}",
             (
                 self.dup_jaccard,
                 self.k,
@@ -125,6 +166,18 @@ impl Config {
                 self.seen_ids_window_ms,
                 self.rebuild_tombstone_ratio,
                 &self.hnsw,
+            ),
+            (
+                self.lineage_every_inputs,
+                self.split_min_size,
+                self.split_min_component,
+                self.split_max_similarity,
+                self.merge_min_size,
+                self.merge_min_similarity,
+                self.merge_min_similarity_unanchored,
+                self.anchor_min_concentration,
+                self.lineage_confirm_checks,
+                self.lineage_cooldown_checks,
             )
         ));
         if let Some(c) = &self.centering {
@@ -178,15 +231,21 @@ pub struct Story {
     pub members: Vec<u32>,
     /// Non-duplicate members (the ones in the vector index).
     pub originals: Vec<u32>,
-    centroid_sum: Vec<f32>,
+    pub(crate) centroid_sum: Vec<f32>,
     pub sources: BTreeSet<String>,
     pub langs: BTreeSet<String>,
     pub headline: u32,
     pub first_event_ms: i64,
     pub last_event_ms: i64,
     /// Sum and count of members' centroid similarity at the time they joined.
-    cohesion_sum: f32,
-    cohesion_n: u32,
+    pub(crate) cohesion_sum: f32,
+    pub(crate) cohesion_n: u32,
+    /// Lineage: the story this one split from.
+    pub parents: Vec<String>,
+    /// Lineage: stories merged into this one.
+    pub merged_from: Vec<String>,
+    /// No split/merge before this lineage check.
+    pub(crate) cooldown_until: u64,
 }
 
 impl Story {
@@ -206,20 +265,30 @@ impl Story {
 /// All mutable engine state. Snapshotting this is a complete checkpoint.
 #[derive(Serialize, Deserialize)]
 pub struct State {
-    dim: Option<usize>,
-    next_key: u32,
-    articles: BTreeMap<u32, ArticleState>,
+    pub(crate) dim: Option<usize>,
+    pub(crate) next_key: u32,
+    pub(crate) articles: BTreeMap<u32, ArticleState>,
     /// Keyed by the seed article's key, so iteration order is creation order.
-    stories: BTreeMap<u32, Story>,
+    pub(crate) stories: BTreeMap<u32, Story>,
     /// xxh3(article id) → event time, for exact-duplicate detection.
-    seen_ids: BTreeMap<u64, i64>,
-    lsh: LshIndex,
-    ann: Option<Hnsw>,
+    pub(crate) seen_ids: BTreeMap<u64, i64>,
+    pub(crate) lsh: LshIndex,
+    pub(crate) ann: Option<Hnsw>,
     /// Evicted articles still present in `ann`.
-    tombstones: usize,
-    max_event_ms: i64,
-    watermark_ms: i64,
-    last_tick: i64,
+    pub(crate) tombstones: usize,
+    pub(crate) max_event_ms: i64,
+    pub(crate) watermark_ms: i64,
+    pub(crate) last_tick: i64,
+    pub(crate) inputs_since_lineage: u32,
+    pub(crate) lineage_checks: u64,
+    /// Stories changed since the last lineage check.
+    pub(crate) dirty: BTreeSet<u32>,
+    /// Story → consecutive checks it has qualified to split.
+    pub(crate) pending_splits: BTreeMap<u32, u32>,
+    /// (story, story) → consecutive checks the pair has qualified to merge.
+    pub(crate) pending_merges: BTreeMap<(u32, u32), u32>,
+    /// xxh3(title word) → live articles whose title contains it.
+    pub(crate) word_df: BTreeMap<u64, u32>,
 }
 
 impl Default for State {
@@ -236,14 +305,20 @@ impl Default for State {
             max_event_ms: i64::MIN,
             watermark_ms: i64::MIN,
             last_tick: i64::MIN,
+            inputs_since_lineage: 0,
+            lineage_checks: 0,
+            dirty: BTreeSet::new(),
+            pending_splits: BTreeMap::new(),
+            pending_merges: BTreeMap::new(),
+            word_df: BTreeMap::new(),
         }
     }
 }
 
 pub struct Engine {
-    cfg: Config,
+    pub(crate) cfg: Config,
     minhasher: MinHasher,
-    s: State,
+    pub(crate) s: State,
 }
 
 impl Engine {
@@ -297,7 +372,27 @@ impl Engine {
         self.s.ann.as_ref()?.vector(key)
     }
 
+    /// Processes one input; every `lineage_every_inputs` valid inputs, also
+    /// runs split/merge detection (its events follow the input's own).
     pub fn process(&mut self, input: &EmbeddedArticle, input_offset: i64) -> Processed {
+        let mut processed = self.process_article(input, input_offset);
+        if processed.outcome == Outcome::Invalid {
+            return processed;
+        }
+        self.s.inputs_since_lineage += 1;
+        if self.s.inputs_since_lineage >= self.cfg.lineage_every_inputs {
+            self.s.inputs_since_lineage = 0;
+            let mut out = Emitter::new(input_offset);
+            out.seq_base = processed.events.len() as u32;
+            out.event_time_ms = self.s.max_event_ms;
+            out.watermark_ms = self.s.watermark_ms;
+            self.lineage(&mut out);
+            processed.events.extend(out.events);
+        }
+        processed
+    }
+
+    fn process_article(&mut self, input: &EmbeddedArticle, input_offset: i64) -> Processed {
         let invalid = || Processed {
             outcome: Outcome::Invalid,
             late: false,
@@ -468,6 +563,9 @@ impl Engine {
                         last_event_ms: event_time,
                         cohesion_sum: 0.0,
                         cohesion_n: 0,
+                        parents: Vec::new(),
+                        merged_from: Vec::new(),
+                        cooldown_until: 0,
                     },
                 );
                 self.add_member(key, key, Some((vector, None)));
@@ -476,6 +574,7 @@ impl Engine {
                     seed_article_id: article.id.clone(),
                     headline: article.title.clone(),
                     lang: article.lang.clone(),
+                    parent_story_ids: Vec::new(),
                 }));
                 done(Outcome::Created, out)
             }
@@ -521,7 +620,16 @@ impl Engine {
                 reason: CloseReason::Idle as i32,
             }));
             for member in &story.members {
-                self.s.articles.remove(member);
+                if let Some(article) = self.s.articles.remove(member) {
+                    for word in title_words(&article.title) {
+                        if let Some(n) = self.s.word_df.get_mut(&word) {
+                            *n -= 1;
+                            if *n == 0 {
+                                self.s.word_df.remove(&word);
+                            }
+                        }
+                    }
+                }
             }
             self.s.tombstones += story.originals.len();
         }
@@ -546,6 +654,9 @@ impl Engine {
     }
 
     fn push_article(&mut self, key: u32, state: ArticleState, signature: Option<Signature>) {
+        for word in title_words(&state.title) {
+            *self.s.word_df.entry(word).or_default() += 1;
+        }
         self.s.next_key += 1;
         self.s.articles.insert(key, state);
         if let Some(sig) = signature {
@@ -569,6 +680,7 @@ impl Engine {
         key: u32,
         indexed: Option<(&[f32], Option<f32>)>,
     ) -> bool {
+        self.s.dirty.insert(story_key);
         let article = &self.s.articles[&key];
         let story = self.s.stories.get_mut(&story_key).expect("story exists");
         story.members.push(key);
@@ -617,7 +729,7 @@ impl Engine {
         changed
     }
 
-    fn story_updated(&self, story_key: u32) -> Kind {
+    pub(crate) fn story_updated(&self, story_key: u32) -> Kind {
         let story = &self.s.stories[&story_key];
         let headline = &self.s.articles[&story.headline];
         Kind::Updated(StoryUpdated {
@@ -632,26 +744,38 @@ impl Engine {
     }
 }
 
+/// Distinct hashed title words, excluding pure numbers (years, counts, dates).
+pub(crate) fn title_words(title: &str) -> BTreeSet<u64> {
+    crate::minhash::normalize(title)
+        .split(' ')
+        .filter(|w| w.chars().count() >= 3 && !w.chars().all(|c| c.is_numeric()))
+        .map(|w| xxh3_64(w.as_bytes()))
+        .collect()
+}
+
 /// Builds events with deterministic ids derived from the input position.
-struct Emitter {
+pub(crate) struct Emitter {
     input_offset: i64,
-    event_time_ms: i64,
-    watermark_ms: i64,
-    events: Vec<StoryEvent>,
+    /// First `seq` to use, when continuing another emitter's sequence.
+    pub(crate) seq_base: u32,
+    pub(crate) event_time_ms: i64,
+    pub(crate) watermark_ms: i64,
+    pub(crate) events: Vec<StoryEvent>,
 }
 
 impl Emitter {
-    fn new(input_offset: i64) -> Self {
+    pub(crate) fn new(input_offset: i64) -> Self {
         Self {
             input_offset,
+            seq_base: 0,
             event_time_ms: 0,
             watermark_ms: 0,
             events: Vec::new(),
         }
     }
 
-    fn emit(&mut self, kind: Kind) {
-        let seq = self.events.len() as u32;
+    pub(crate) fn emit(&mut self, kind: Kind) {
+        let seq = self.seq_base + self.events.len() as u32;
         let mut h = Sha256::new();
         h.update(self.input_offset.to_le_bytes());
         h.update(seq.to_le_bytes());

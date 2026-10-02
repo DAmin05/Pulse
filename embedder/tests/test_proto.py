@@ -21,7 +21,10 @@ def test_embedded_article_round_trip() -> None:
 
 
 def test_story_event_oneof() -> None:
-    split = story_pb2.StorySplit(parent_story_id="s1", child_story_ids=["s2", "s3"])
+    split = story_pb2.StorySplit(
+        parent_story_id="s1",
+        children=[story_pb2.SplitChild(story_id="s2", article_ids=["a1", "a2"])],
+    )
     event = story_pb2.StoryEvent(event_id="e1", split=split)
     assert event.WhichOneof("kind") == "split"
 

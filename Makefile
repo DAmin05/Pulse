@@ -74,6 +74,12 @@ chaos-relay: ## kill -9 the relay repeatedly; verify exactly-once output
 process: ## Run the Story Processor live (articles.embedded → stories.events)
 	cargo run -p story-processor --release -- run
 
+reset-processor: ## Delete processor state + outputs (snapshots, offsets, stories.events, articles.late); it reprocesses from the start
+	rm -rf data/checkpoints/story-processor
+	-$(COMPOSE) exec -T redpanda rpk group delete story-processor
+	-$(COMPOSE) exec -T redpanda rpk topic delete stories.events articles.late
+	@$(COMPOSE) run --rm --no-deps redpanda-init
+
 chaos-processor: ## kill -9 the processor repeatedly; output must be byte-identical to a clean run
 	scripts/chaos/processor.sh $(or $(KILLS),10) $(or $(FIXTURE),data/fixtures/synth.pulseem)
 

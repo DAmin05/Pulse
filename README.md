@@ -200,10 +200,47 @@ pulse topic hash <topic>              # order-sensitive fingerprint of committed
   epochs and frequent snapshots. Both output topics must have identical hashes. CI
   runs 50 kills on 20k synthetic articles.
 
-Known limitations, planned for later phases: same-template events in different
-countries ("government presents 2027 budget") can share a story until **split
-detection** separates them (phase 5). Evergreen genres (horoscopes) cluster
-together; they're rare in the curated RSS feeds but common in GDELT.
+### Lineage: splits and merges
+
+```bash
+story-processor lineage --fixture data/fixtures/x.pulseem   # every split/merge with headlines + similarity probes
+make reset-processor                                        # clear processor state + outputs after config/schema changes
+```
+
+Every 100 inputs (a position in the log, so deterministic; and it's when stories
+change), stories that changed since the last check are re-evaluated:
+
+- **Split:** a deterministic 2-means over a story's indexed members. If both halves
+  have ≥3 members and their centroids are less than 0.50 similar, the story splits:
+  `StorySplit` lists which articles go to which child, each child gets a
+  `StoryCreated` with `parent_story_ids`, and the parent gets `StoryClosed(SPLIT)`.
+- **Merge:** established stories whose centroids are ≥0.72 similar *and* share an
+  **anchor word**, or ≥0.82 without one. A word anchors a pair when at least half
+  of the live articles using it are in those two stories: "Flydubai" or "Bardella"
+  qualify, "budget", "2027" or "Sendung" don't. That separates real same-event
+  fragments from template look-alikes at similar embedding scores.
+- **Anti-flapping:** a candidate must qualify on 2 consecutive checks; the merge
+  threshold sits well above the split threshold; and stories involved sit out 6
+  checks afterwards.
+
+Tuning results: RSS gets 4 merges, all correct (FlyDubai fragments, Bardella/Mediapart,
+the Russian Christa Pike story into the English one) and 0 splits; its most
+separable large story is still one event (halves 0.74 similar). On headline-only
+GDELT, most of the 59 merges are correct cross-lingual ones (Vietnamese → Spanish
+helicopter crash, Malvinas, Plavšić, Pakistan–Afghanistan), but template clusters
+formed at join time (budgets by country, TV listings, horoscopes, ballot numbers)
+merge with each other. Fixing those needs entity- or content-type features, not
+thresholds. Split threshold 0.50 gives no false splits; at 0.55 GDELT split one
+event by language.
+
+Snapshot/restore stays exact with lineage active: the property test includes
+split-heavy and merge-heavy configurations, and the chaos test passes on real data
+while merges are happening.
+
+Known limitations: same-template events in different countries ("government
+presents 2027 budget") share a story on headline-only data, and lineage can't
+separate them; evergreen genres (horoscopes) cluster together. Both are rare in the
+curated RSS feeds and common in GDELT.
 
 ## Local services
 

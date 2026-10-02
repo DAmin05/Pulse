@@ -46,6 +46,23 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         audit: usize,
     },
+    /// List every split and merge with headlines, and probe the similarity
+    /// distributions the thresholds act on.
+    Lineage {
+        #[arg(long)]
+        fixture: PathBuf,
+        #[command(flatten)]
+        tuning: Tuning,
+        #[arg(long)]
+        split_max_similarity: Option<f32>,
+        #[arg(long)]
+        merge_min_similarity: Option<f32>,
+        #[arg(long)]
+        merge_min_similarity_unanchored: Option<f32>,
+        /// Lineage events to print.
+        #[arg(long, default_value_t = 20)]
+        show: usize,
+    },
     /// Fit per-language mean vectors on a fixture and freeze them in a file.
     Calibrate {
         #[arg(long)]
@@ -177,6 +194,27 @@ fn main() -> Result<()> {
             let inputs = load(&fixture)?;
             let cfg = tuning.config(&inputs)?;
             eval(&fixture, inputs, cfg, top, report.as_deref(), audit)
+        }
+        Command::Lineage {
+            fixture,
+            tuning,
+            split_max_similarity,
+            merge_min_similarity,
+            merge_min_similarity_unanchored,
+            show,
+        } => {
+            let inputs = load(&fixture)?;
+            let mut cfg = tuning.config(&inputs)?;
+            if let Some(v) = split_max_similarity {
+                cfg.split_max_similarity = v;
+            }
+            if let Some(v) = merge_min_similarity {
+                cfg.merge_min_similarity = v;
+            }
+            if let Some(v) = merge_min_similarity_unanchored {
+                cfg.merge_min_similarity_unanchored = v;
+            }
+            lineage(&inputs, cfg, show)
         }
         Command::Calibrate {
             fixture,
@@ -493,6 +531,141 @@ fn eval(
         }
         std::fs::write(out, md)?;
         println!("\nreport: {}", out.display());
+    }
+    Ok(())
+}
+
+fn lineage(inputs: &[EmbeddedArticle], cfg: Config, show: usize) -> Result<()> {
+    use pulse_core::proto::v1::story_event::Kind;
+    use std::collections::HashMap;
+
+    println!(
+        "split if halves < {:.2} similar (≥{} members, ≥{} each); merge if centroids ≥ {:.2} with a \
+         shared anchor or ≥ {:.2} without (≥{} members); confirm {} checks, every {} inputs, cooldown {}",
+        cfg.split_max_similarity,
+        cfg.split_min_size,
+        cfg.split_min_component,
+        cfg.merge_min_similarity,
+        cfg.merge_min_similarity_unanchored,
+        cfg.merge_min_size,
+        cfg.lineage_confirm_checks,
+        cfg.lineage_every_inputs,
+        cfg.lineage_cooldown_checks
+    );
+    let mut engine = Engine::new(cfg.clone());
+    let mut headline: HashMap<String, String> = HashMap::new();
+    let mut size: HashMap<String, u32> = HashMap::new();
+    let (mut splits, mut merges, mut shown_splits, mut shown_merges) = (0, 0, 0, 0);
+    for (offset, input) in inputs.iter().enumerate() {
+        let events = engine.process(input, offset as i64).events;
+        for e in &events {
+            match &e.kind {
+                Some(Kind::Created(c)) => {
+                    headline.insert(c.story_id.clone(), c.headline.clone());
+                    size.insert(c.story_id.clone(), 1);
+                }
+                Some(Kind::Updated(u)) => {
+                    headline.insert(u.story_id.clone(), u.headline.clone());
+                    size.insert(u.story_id.clone(), u.article_count);
+                }
+                _ => {}
+            }
+        }
+        // Print after the whole input so children's headlines are known.
+        for e in &events {
+            let h = |id: &str| headline.get(id).cloned().unwrap_or_default();
+            match &e.kind {
+                Some(Kind::Split(sp)) => {
+                    splits += 1;
+                    if shown_splits < show {
+                        shown_splits += 1;
+                        println!("\nSPLIT @{offset}  {}", h(&sp.parent_story_id));
+                        for c in &sp.children {
+                            println!("   → ({:>3}) {}", c.article_ids.len(), h(&c.story_id));
+                        }
+                    }
+                }
+                Some(Kind::Merged(m)) => {
+                    merges += 1;
+                    if shown_merges < show {
+                        shown_merges += 1;
+                        for src in &m.source_story_ids {
+                            println!(
+                                "\nMERGE @{offset}  ({:>3}) {}",
+                                size.get(src).copied().unwrap_or(0),
+                                h(src)
+                            );
+                        }
+                        println!(
+                            "   into ({:>3}) {}",
+                            size.get(&m.target_story_id).copied().unwrap_or(0),
+                            h(&m.target_story_id)
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    println!(
+        "\n{splits} splits, {merges} merges, {} open stories at end",
+        engine.stories().len()
+    );
+
+    // Probe the end state: how separable are big stories, how close are pairs?
+    let title = |k: u32| engine.articles()[&k].title.clone();
+    let mut split_sims: Vec<(f32, u32)> = engine
+        .stories()
+        .iter()
+        .filter(|(_, s)| s.originals.len() >= cfg.split_min_size)
+        .filter_map(|(&k, s)| engine.split_plan(s).map(|p| (p.similarity, k)))
+        .collect();
+    split_sims.sort_by(|a, b| a.0.total_cmp(&b.0));
+    if !split_sims.is_empty() {
+        let q = |p: f64| split_sims[((split_sims.len() - 1) as f64 * p) as usize].0;
+        println!(
+            "\nprobe: 2-means halves similarity over {} large stories: min {:.2} p10 {:.2} p50 {:.2} p90 {:.2}",
+            split_sims.len(),
+            q(0.0),
+            q(0.1),
+            q(0.5),
+            q(0.9)
+        );
+        for &(sim, k) in split_sims.iter().take(5) {
+            let s = &engine.stories()[&k];
+            let plan = engine.split_plan(s).expect("computed above");
+            println!("  {sim:.2}  {}", title(s.headline));
+            for g in &plan.groups {
+                println!("        ({:>3}) {}", g.len(), title(g[0]));
+            }
+        }
+    }
+    let eligible: Vec<(u32, Vec<f32>)> = engine
+        .stories()
+        .iter()
+        .filter(|(_, s)| s.originals.len() >= cfg.merge_min_size)
+        .map(|(&k, s)| (k, s.centroid()))
+        .collect();
+    let mut pairs: Vec<(f32, u32, u32)> = Vec::new();
+    for (i, (a, ca)) in eligible.iter().enumerate() {
+        for (b, cb) in &eligible[i + 1..] {
+            pairs.push((story_processor::ann::dot(ca, cb), *a, *b));
+        }
+    }
+    pairs.sort_by(|x, y| y.0.total_cmp(&x.0));
+    println!(
+        "\nprobe: most similar story pairs among {} established stories:",
+        eligible.len()
+    );
+    for &(sim, a, b) in pairs.iter().take(8) {
+        let (sa, sb) = (&engine.stories()[&a], &engine.stories()[&b]);
+        println!(
+            "  {sim:.2}  ({:>3}) {}\n        ({:>3}) {}",
+            sa.members.len(),
+            title(sa.headline),
+            sb.members.len(),
+            title(sb.headline)
+        );
     }
     Ok(())
 }

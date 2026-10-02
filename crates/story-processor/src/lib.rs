@@ -4,6 +4,7 @@
 pub mod ann;
 pub mod centering;
 pub mod engine;
+mod lineage;
 pub mod live;
 pub mod minhash;
 pub mod snapshot;
