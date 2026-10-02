@@ -8,7 +8,22 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+async-stream = "0.3.6"
+axum = "0.8"
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
+futures = "0.3.34"
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
 pulse-core.workspace = true
+pulse-store = { version = "0.1.0", path = "../pulse-store" }
+rdkafka.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = "1.0.151"
+tokio.workspace = true
+tokio-stream = "0.1.19"
+toml = "1.1.6"
+tonic = { version = "0.13", default-features = false, features = ["transport"] }
+tower-http = { version = "0.6", features = ["cors", "compression-gzip", "trace"] }
 tracing.workspace = true
 
 [lints]

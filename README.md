@@ -16,8 +16,9 @@ crates/
   ingestor/          RSS + GDELT polling → articles.raw
   embed-relay/       articles.raw → Embedder → articles.embedded (Kafka transactions)
   story-processor/   clustering engine, watermarks, snapshots, exactly-once live mode
-  story-sink/        stories.events → Postgres                     (phase 6)
-  query-api/         Axum REST + SSE                               (phase 6)
+  pulse-store/       Postgres read model: schema, exactly-once writer, time-travel queries
+  story-sink/        articles.embedded + stories.events → Postgres (offsets in the same txn)
+  query-api/         Axum REST + SSE (live, resumable) over the read model
 embedder/            Python gRPC embedding service (ONNX, dynamic batching)
 proto/               protobuf schemas (buf-managed)
 config/              sources.toml (feed catalog), centering/ (frozen per-language means)
@@ -38,9 +39,13 @@ docs/                design and plan
 
 ```bash
 make up        # start the stack, create topics and buckets
-make doctor    # verify everything from the host
+make model     # download the embedding model (once)
+make pipeline  # run everything: ingest → embed → cluster → Postgres → API (Ctrl-C stops all)
+make doctor    # verify the stack from the host
 make check     # fmt, clippy, tests, buf lint, embedder tests
 ```
+
+Then try `curl localhost:9105/api/stories?limit=5` or `curl -N localhost:9105/api/stream`.
 
 `make help` lists all targets. `make nuke` deletes all local data.
 
@@ -242,6 +247,41 @@ presents 2027 budget") share a story on headline-only data, and lineage can't
 separate them; evergreen genres (horoscopes) cluster together. Both are rare in the
 curated RSS feeds and common in GDELT.
 
+## Read model & API
+
+The **sink** applies `articles.embedded` and `stories.events` to Postgres. Each batch's
+rows **and the consumed offsets** commit in one transaction, and the sink resumes
+from offsets stored in Postgres, so it's exactly-once without Kafka commits. Every
+statement is also idempotent (tested by applying a whole history twice).
+
+**History is versioned by log position.** Each article's story membership is stored
+as a validity range `[from_offset, to_offset)` in `articles.embedded`, so splits and
+merges close rows instead of overwriting them, and any past state is a query: pass
+`?at=<offset>` or `?as_of=<RFC 3339 time>` to any read endpoint. "Now" is just the
+latest position, so live views and time travel share one code path.
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/stories?sort=sources\|size\|recent&lang=&min_sources=&limit=` | Story cards: headline, languages, counts, top sources, 24h activity sparkline, lineage ids |
+| `GET /api/stories/{id}` | Articles (with duplicate/late flags), parents, children, merged from/into, event history |
+| `GET /api/graph?limit=&min_sources=&min_similarity=` | Nodes + similarity edges (centroid cosine) + split edges + recent splits/merges |
+| `GET /api/search?q=` | Cross-lingual semantic search (e5 query → pgvector), grouped by story; `strong` flags real matches |
+| `GET /api/timeline?buckets=` | Articles / new stories / splits / merges / closes per time bucket, with the offset to jump to |
+| `GET /api/stats` | Totals, Kafka end offsets, sink position and lag per topic |
+| `GET /api/sources` | Feed catalog with article counts and last fetch |
+| `GET /api/stream` | **SSE** of committed story events (`event: story`, `id: <offset>:<seq>`); resume with `Last-Event-ID` or `?after=` |
+| `GET /metrics` | Prometheus (request latency per route, live clients) |
+
+The stream is fed by a Postgres `NOTIFY` that the sink sends **inside its
+transaction**, so a streamed event is always already queryable. There's no race
+between "event arrived" and "story not in the DB yet". A reconnecting client
+replays exactly what it missed (verified: 966 events, in order, no duplicates),
+then continues live.
+
+Verified live: with `make pipeline`, 846 fresh articles flowed from RSS to the SSE
+stream in 4 minutes (622 new stories, 220 joins, 2 live merges), with zero warnings
+from any service and sink lag 0.
+
 ## Local services
 
 | Service | URL | Notes |
@@ -252,7 +292,8 @@ curated RSS feeds and common in GDELT.
 | Postgres + pgvector | `localhost:5432` | `pulse` / `pulse` |
 | S3 (SeaweedFS) | http://localhost:8333 | buckets `pulse-checkpoints`, `pulse-audio` |
 | SeaweedFS master | http://localhost:9333 | |
-| Prometheus | http://localhost:9090 | scrapes host services on ports 9101–9105 |
+| Query API | http://localhost:9105/api | REST + SSE; `/metrics` too |
+| Prometheus | http://localhost:9090 | scrapes host services on ports 9101–9106 |
 | Grafana | http://localhost:3000 | `admin` / `pulse` |
 
 All credentials are local-development values. Real API keys go in `.env`, which is

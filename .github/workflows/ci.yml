@@ -54,6 +54,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: make up
       - run: make doctor
+      - run: make test-db
       # Exactly-once + determinism under crashes, on synthetic data (real
       # fixtures hold publishers' text and are not in the repo).
       - run: cargo build --release -p story-processor -p pulse-cli

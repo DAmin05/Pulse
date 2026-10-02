@@ -8,7 +8,14 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+metrics = "0.24"
+metrics-exporter-prometheus = { version = "0.18", default-features = false, features = ["http-listener"] }
+prost.workspace = true
 pulse-core.workspace = true
+pulse-store = { version = "0.1.0", path = "../pulse-store" }
+rdkafka.workspace = true
+tokio.workspace = true
+tokio-util = "0.7.19"
 tracing.workspace = true
 
 [lints]

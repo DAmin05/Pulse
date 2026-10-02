@@ -1,0 +1,22 @@
+[package]
+name = "pulse-store"
+description = "Postgres read model for Pulse: schema, idempotent event application, queries."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono = { version = "0.4.45", default-features = false, features = ["std", "clock", "serde"] }
+deadpool-postgres = "0.14.2"
+pgvector = { version = "0.4.2", features = ["postgres"] }
+pulse-core.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = "1.0.151"
+tokio.workspace = true
+tokio-postgres = { workspace = true, features = ["with-chrono-0_4", "with-serde_json-1"] }
+tracing.workspace = true
+
+[lints]
+workspace = true

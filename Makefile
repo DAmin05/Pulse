@@ -74,14 +74,29 @@ chaos-relay: ## kill -9 the relay repeatedly; verify exactly-once output
 process: ## Run the Story Processor live (articles.embedded → stories.events)
 	cargo run -p story-processor --release -- run
 
-reset-processor: ## Delete processor state + outputs (snapshots, offsets, stories.events, articles.late); it reprocesses from the start
+reset-processor: ## Delete processor state + outputs (snapshots, offsets, topics, read model); everything reprocesses from the start
 	rm -rf data/checkpoints/story-processor
+	cargo run -q -p story-sink --release -- reset
 	-$(COMPOSE) exec -T redpanda rpk group delete story-processor
 	-$(COMPOSE) exec -T redpanda rpk topic delete stories.events articles.late
 	@$(COMPOSE) run --rm --no-deps redpanda-init
 
 chaos-processor: ## kill -9 the processor repeatedly; output must be byte-identical to a clean run
 	scripts/chaos/processor.sh $(or $(KILLS),10) $(or $(FIXTURE),data/fixtures/synth.pulseem)
+
+# --- Read model & API --------------------------------------------------------
+
+sink: ## Run the Story Sink (articles.embedded + stories.events → Postgres)
+	cargo run -p story-sink --release
+
+api: ## Run the Query API (REST + SSE on :9105)
+	cargo run -p query-api --release
+
+pipeline: ## Run every service (ingest → embed → process → sink → API); Ctrl-C stops all
+	scripts/pipeline.sh
+
+test-db: ## Read-model integration tests against the local Postgres
+	PULSE_TEST_DATABASE_URL=$${PULSE_DATABASE_URL:-postgres://pulse:pulse@localhost:5432/pulse} cargo test -p pulse-store
 
 EMBEDDED ?= data/fixtures/smoke.pulseem
 cluster-eval: ## Cluster an embedded fixture and print story quality (EMBEDDED=...)
